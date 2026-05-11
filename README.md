@@ -2,6 +2,8 @@
 
 Real-time multiplayer game using Phaser 3 + TypeScript (client) and Node.js + Socket.io (server).
 
+https://arabat-io.onrender.com
+
 ## Quick Start
 
 ### 1. Start the server
