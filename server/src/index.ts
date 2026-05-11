@@ -3,22 +3,16 @@ import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import cors from 'cors';
 import path from 'path';
+import { existsSync } from 'fs';
 
 const app = express();
 app.use(cors());
 
-const clientDist = path.join(__dirname, '../../client/dist');
-app.use(express.static(clientDist));
-app.get('/', (_req, res) => {
-  res.sendFile(path.join(clientDist, 'index.html'));
-});
-
 const httpServer = createServer(app);
-const ALLOWED_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 
 const io = new Server(httpServer, {
   cors: {
-    origin: ALLOWED_ORIGIN,
+    origin: true,
     methods: ['GET', 'POST'],
   },
 });
@@ -37,7 +31,7 @@ function randomBetween(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-// FNV-1a hash — stable across runs, identical for identical inputs.
+// FNV-1a — stable hash across runs, identical for identical inputs.
 function hashString(s: string): number {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < s.length; i++) {
@@ -104,6 +98,20 @@ io.on('connection', (socket: Socket) => {
     io.emit('userDisconnected', socket.id);
   });
 });
+
+// Serve the built client. Guard with existsSync so a server-only local dev
+// run (no client build) still boots cleanly.
+const clientDist = path.resolve(__dirname, '../../client/dist');
+if (existsSync(clientDist)) {
+  app.use(express.static(clientDist));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+} else {
+  app.get('/', (_req, res) => {
+    res.send('arabat-io server is running (no client build present)');
+  });
+}
 
 const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {
