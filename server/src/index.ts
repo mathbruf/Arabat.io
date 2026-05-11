@@ -6,6 +6,10 @@ import cors from 'cors';
 const app = express();
 app.use(cors());
 
+app.get('/', (_req, res) => {
+  res.send('arabat-io server is running');
+});
+
 const httpServer = createServer(app);
 const ALLOWED_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 
