@@ -1,135 +1,103 @@
 import Phaser from 'phaser';
-import { io, Socket } from 'socket.io-client';
+import { PlayerData } from './types';
+import { InputController } from './input/InputController';
+import { LocalPlayer, PLAYER_RADIUS } from './entities/LocalPlayer';
+import { RemotePlayer } from './entities/RemotePlayer';
+import { NetworkClient } from './net/NetworkClient';
 
-interface PlayerData {
-  id: string;
-  x: number;
-  y: number;
-  color: number;
-}
-
-const SPEED = 200;
-const PLAYER_SIZE = 32;
+const POSITION_SEND_HZ = 20;
+const SEND_INTERVAL_MS = 1000 / POSITION_SEND_HZ;
 
 export class GameScene extends Phaser.Scene {
-  private socket!: Socket;
-  private localPlayer!: Phaser.Physics.Arcade.Image;
-  private otherPlayers!: Phaser.Physics.Arcade.Group;
-  private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
-  private wasd!: {
-    up: Phaser.Input.Keyboard.Key;
-    down: Phaser.Input.Keyboard.Key;
-    left: Phaser.Input.Keyboard.Key;
-    right: Phaser.Input.Keyboard.Key;
-  };
-  private lastX = 0;
-  private lastY = 0;
+  private inputCtl!: InputController;
+  private network!: NetworkClient;
+  private localPlayer?: LocalPlayer;
+  private remotePlayers = new Map<string, RemotePlayer>();
+  private sendAccumMs = 0;
+  private lastSentX = Number.NaN;
+  private lastSentY = Number.NaN;
 
   constructor() {
     super({ key: 'GameScene' });
   }
 
   preload() {
-    // Generate a simple square texture at runtime — no external assets needed
     const gfx = this.make.graphics({ x: 0, y: 0 });
-    gfx.fillStyle(0xffffff);
-    gfx.fillRect(0, 0, PLAYER_SIZE, PLAYER_SIZE);
-    gfx.generateTexture('player', PLAYER_SIZE, PLAYER_SIZE);
+    gfx.fillStyle(0xffffff, 1);
+    gfx.fillCircle(PLAYER_RADIUS, PLAYER_RADIUS, PLAYER_RADIUS);
+    gfx.generateTexture('circle', PLAYER_RADIUS * 2, PLAYER_RADIUS * 2);
     gfx.destroy();
   }
 
   create() {
-    this.otherPlayers = this.physics.add.group();
-
-    this.cursors = this.input.keyboard!.createCursorKeys();
-    this.wasd = {
-      up: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W),
-      down: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.S),
-      left: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A),
-      right: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D),
-    };
+    this.inputCtl = new InputController(this);
 
     const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
-    this.socket = io(serverUrl);
-
-    this.socket.on('currentPlayers', (players: Record<string, PlayerData>) => {
-      Object.values(players).forEach((player) => {
-        if (player.id === this.socket.id) {
-          this.addLocalPlayer(player);
-        } else {
-          this.addOtherPlayer(player);
-        }
-      });
-    });
-
-    this.socket.on('newPlayer', (player: PlayerData) => {
-      this.addOtherPlayer(player);
-    });
-
-    this.socket.on('playerMoved', (player: PlayerData) => {
-      this.otherPlayers.getChildren().forEach((child) => {
-        const sprite = child as Phaser.Physics.Arcade.Image;
-        if (sprite.name === player.id) {
-          sprite.setPosition(player.x, player.y);
-        }
-      });
-    });
-
-    this.socket.on('userDisconnected', (id: string) => {
-      this.otherPlayers.getChildren().forEach((child) => {
-        const sprite = child as Phaser.Physics.Arcade.Image;
-        if (sprite.name === id) {
-          sprite.destroy();
-        }
-      });
+    this.network = new NetworkClient(serverUrl, {
+      onCurrentPlayers: (players) => this.handleCurrentPlayers(players),
+      onNewPlayer: (player) => this.handleNewPlayer(player),
+      onPlayerMoved: (player) => this.handlePlayerMoved(player),
+      onUserDisconnected: (id) => this.handleDisconnect(id),
     });
   }
 
-  private addLocalPlayer(player: PlayerData) {
-    this.localPlayer = this.physics.add.image(player.x, player.y, 'player');
-    this.localPlayer.setTint(player.color);
-    this.localPlayer.setCollideWorldBounds(true);
-    this.lastX = player.x;
-    this.lastY = player.y;
+  update(_time: number, deltaMs: number) {
+    const dt = deltaMs / 1000;
+
+    if (this.localPlayer) {
+      this.localPlayer.update(dt);
+      this.maybeSendPosition(deltaMs);
+    }
+
+    for (const remote of this.remotePlayers.values()) {
+      remote.update(dt);
+    }
   }
 
-  private addOtherPlayer(player: PlayerData) {
-    const sprite = this.physics.add.image(player.x, player.y, 'player');
-    sprite.setTint(player.color);
-    sprite.setName(player.id);
-    sprite.setAlpha(0.8);
-    this.otherPlayers.add(sprite);
+  private handleCurrentPlayers(players: Record<string, PlayerData>) {
+    for (const player of Object.values(players)) {
+      if (player.id === this.network.id) {
+        this.localPlayer = new LocalPlayer(this, player, this.inputCtl);
+      } else {
+        this.addRemote(player);
+      }
+    }
   }
 
-  update() {
+  private handleNewPlayer(player: PlayerData) {
+    if (player.id === this.network.id) return;
+    this.addRemote(player);
+  }
+
+  private handlePlayerMoved(player: PlayerData) {
+    const remote = this.remotePlayers.get(player.id);
+    if (remote) remote.setTarget(player.x, player.y);
+  }
+
+  private handleDisconnect(id: string) {
+    const remote = this.remotePlayers.get(id);
+    if (!remote) return;
+    remote.destroy();
+    this.remotePlayers.delete(id);
+  }
+
+  private addRemote(player: PlayerData) {
+    if (this.remotePlayers.has(player.id)) return;
+    this.remotePlayers.set(player.id, new RemotePlayer(this, player));
+  }
+
+  private maybeSendPosition(deltaMs: number) {
     if (!this.localPlayer) return;
+    this.sendAccumMs += deltaMs;
+    if (this.sendAccumMs < SEND_INTERVAL_MS) return;
+    this.sendAccumMs = 0;
 
-    const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
-    body.setVelocity(0, 0);
-
-    const left = this.cursors.left.isDown || this.wasd.left.isDown;
-    const right = this.cursors.right.isDown || this.wasd.right.isDown;
-    const up = this.cursors.up.isDown || this.wasd.up.isDown;
-    const down = this.cursors.down.isDown || this.wasd.down.isDown;
-
-    if (left) body.setVelocityX(-SPEED);
-    else if (right) body.setVelocityX(SPEED);
-
-    if (up) body.setVelocityY(-SPEED);
-    else if (down) body.setVelocityY(SPEED);
-
-    // Normalize diagonal movement
-    if ((left || right) && (up || down)) {
-      body.velocity.normalize().scale(SPEED);
-    }
-
-    const x = Math.round(this.localPlayer.x);
-    const y = Math.round(this.localPlayer.y);
-
-    if (x !== this.lastX || y !== this.lastY) {
-      this.lastX = x;
-      this.lastY = y;
-      this.socket.emit('playerMovement', { x, y });
-    }
+    const { x, y } = this.localPlayer.position;
+    const rx = Math.round(x);
+    const ry = Math.round(y);
+    if (rx === this.lastSentX && ry === this.lastSentY) return;
+    this.lastSentX = rx;
+    this.lastSentY = ry;
+    this.network.sendPosition(rx, ry);
   }
 }
