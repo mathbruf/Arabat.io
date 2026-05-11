@@ -1,35 +1,26 @@
-import Phaser from 'phaser';
 import { PlayerData } from '../types';
+import { PlayerAvatar } from './PlayerAvatar';
 
-const LABEL_OFFSET_Y = 28;
 // Higher = snappier interp toward latest network position.
-const INTERP_RATE = 12;
+const INTERP_RATE = 14;
 
 export class RemotePlayer {
   readonly id: string;
-  private sprite: Phaser.GameObjects.Sprite;
-  private label: Phaser.GameObjects.Text;
+  readonly avatar: PlayerAvatar;
+  name: string;
   private targetX: number;
   private targetY: number;
+  private x: number;
+  private y: number;
 
   constructor(scene: Phaser.Scene, data: PlayerData) {
     this.id = data.id;
+    this.name = data.name;
     this.targetX = data.x;
     this.targetY = data.y;
-
-    this.sprite = scene.add.sprite(data.x, data.y, 'circle');
-    this.sprite.setTint(data.color);
-    this.sprite.setAlpha(0.9);
-
-    this.label = scene.add
-      .text(data.x, data.y - LABEL_OFFSET_Y, data.name, {
-        fontFamily: 'system-ui, sans-serif',
-        fontSize: '13px',
-        color: '#ffffff',
-        stroke: '#000000',
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5, 1);
+    this.x = data.x;
+    this.y = data.y;
+    this.avatar = new PlayerAvatar(scene, data, false);
   }
 
   setTarget(x: number, y: number): void {
@@ -38,15 +29,25 @@ export class RemotePlayer {
   }
 
   update(deltaSeconds: number): void {
-    // Exponential smoothing — frame-rate independent.
     const t = 1 - Math.exp(-INTERP_RATE * deltaSeconds);
-    this.sprite.x += (this.targetX - this.sprite.x) * t;
-    this.sprite.y += (this.targetY - this.sprite.y) * t;
-    this.label.setPosition(this.sprite.x, this.sprite.y - LABEL_OFFSET_Y);
+    this.x += (this.targetX - this.x) * t;
+    this.y += (this.targetY - this.y) * t;
+    this.avatar.setPosition(this.x, this.y);
+  }
+
+  setHp(hp: number): void {
+    this.avatar.setHp(hp);
+  }
+
+  flash(): void {
+    this.avatar.flash();
+  }
+
+  setVisible(v: boolean): void {
+    this.avatar.setVisible(v);
   }
 
   destroy(): void {
-    this.sprite.destroy();
-    this.label.destroy();
+    this.avatar.destroy();
   }
 }
