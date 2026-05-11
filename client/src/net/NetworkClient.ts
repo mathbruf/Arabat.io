@@ -12,7 +12,8 @@ export class NetworkClient {
   private socket: Socket;
 
   constructor(url: string, handlers: NetworkHandlers) {
-    this.socket = io(url);
+    // Empty URL → socket.io connects to the page's origin (same-origin setup).
+    this.socket = url ? io(url) : io();
     this.socket.on('currentPlayers', handlers.onCurrentPlayers);
     this.socket.on('newPlayer', handlers.onNewPlayer);
     this.socket.on('playerMoved', handlers.onPlayerMoved);
