@@ -18,17 +18,20 @@ export class InputController {
 
   constructor(scene: Phaser.Scene) {
     const kb = scene.input.keyboard!;
+    // enableCapture=false: don't preventDefault on the DOM event, so the menu's
+    // <input> can receive WASD/arrows as text when it has focus.
+    const addKey = (code: number) => kb.addKey(code, false);
     this.wasd = {
-      up: kb.addKey(Phaser.Input.Keyboard.KeyCodes.W),
-      down: kb.addKey(Phaser.Input.Keyboard.KeyCodes.S),
-      left: kb.addKey(Phaser.Input.Keyboard.KeyCodes.A),
-      right: kb.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+      up: addKey(Phaser.Input.Keyboard.KeyCodes.W),
+      down: addKey(Phaser.Input.Keyboard.KeyCodes.S),
+      left: addKey(Phaser.Input.Keyboard.KeyCodes.A),
+      right: addKey(Phaser.Input.Keyboard.KeyCodes.D),
     };
     this.arrows = {
-      up: kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP),
-      down: kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
-      left: kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
-      right: kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
+      up: addKey(Phaser.Input.Keyboard.KeyCodes.UP),
+      down: addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
+      left: addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
+      right: addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
     };
   }
 

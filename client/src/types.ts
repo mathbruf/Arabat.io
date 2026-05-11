@@ -7,6 +7,15 @@ export interface PlayerData {
   hp: number;
   maxHp: number;
   alive: boolean;
+  kills: number;
+}
+
+export interface ObstacleData {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface BulletData {
@@ -24,6 +33,7 @@ export interface JoinedPayload {
   self: PlayerData;
   players: Record<string, PlayerData>;
   bullets: BulletData[];
+  obstacles: ObstacleData[];
   world: { width: number; height: number };
 }
 
