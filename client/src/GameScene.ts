@@ -49,7 +49,8 @@ export class GameScene extends Phaser.Scene {
       right: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D),
     };
 
-    this.socket = io('http://localhost:3000');
+    const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
+    this.socket = io(serverUrl);
 
     this.socket.on('currentPlayers', (players: Record<string, PlayerData>) => {
       Object.values(players).forEach((player) => {

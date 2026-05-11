@@ -7,9 +7,11 @@ const app = express();
 app.use(cors());
 
 const httpServer = createServer(app);
+const ALLOWED_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+
 const io = new Server(httpServer, {
   cors: {
-    origin: 'http://localhost:5173',
+    origin: ALLOWED_ORIGIN,
     methods: ['GET', 'POST'],
   },
 });
@@ -61,7 +63,7 @@ io.on('connection', (socket: Socket) => {
   });
 });
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });

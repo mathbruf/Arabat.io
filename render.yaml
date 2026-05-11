@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: arabat-server
+    runtime: node
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_ORIGIN
+        sync: false   # set this manually in the Render dashboard
