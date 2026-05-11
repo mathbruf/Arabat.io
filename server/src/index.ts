@@ -74,7 +74,9 @@ const OBSTACLES: Obstacle[] = [
 
 const players: Record<string, Player> = {};
 const bullets: Record<string, Bullet> = {};
+const pendingMoves: Record<string, { x: number; y: number }> = {};
 const lastShotAt: Record<string, number> = {};
+const lastMovementAt: Record<string, number> = {};
 let bulletSeq = 0;
 
 function randomBetween(min: number, max: number): number {
@@ -198,8 +200,10 @@ io.on('connection', (socket: Socket) => {
     const player = players[socket.id];
     if (!player || !player.alive) return;
     if (typeof data?.x !== 'number' || typeof data?.y !== 'number') return;
+    const now = Date.now();
+    if (now - (lastMovementAt[socket.id] ?? 0) < TICK_MS) return;
+    lastMovementAt[socket.id] = now;
     const clamped = clampToWorld(data.x, data.y);
-    // Slide along obstacles: take whichever single axis is free.
     let nx = clamped.x;
     let ny = clamped.y;
     if (!positionFreeForPlayer(nx, ny)) {
@@ -208,12 +212,12 @@ io.on('connection', (socket: Socket) => {
       } else if (positionFreeForPlayer(player.x, ny)) {
         nx = player.x;
       } else {
-        return; // movement fully blocked; ignore
+        return;
       }
     }
     player.x = nx;
     player.y = ny;
-    socket.broadcast.emit('playerMoved', player);
+    pendingMoves[socket.id] = { x: nx, y: ny };
   });
 
   socket.on('shoot', (data: unknown) => {
@@ -260,6 +264,8 @@ io.on('connection', (socket: Socket) => {
     if (!players[socket.id]) return;
     delete players[socket.id];
     delete lastShotAt[socket.id];
+    delete lastMovementAt[socket.id];
+    delete pendingMoves[socket.id];
     io.emit('userDisconnected', socket.id);
     console.log(`Player left: ${socket.id}`);
   });
@@ -271,6 +277,8 @@ io.on('connection', (socket: Socket) => {
       io.emit('userDisconnected', socket.id);
     }
     delete lastShotAt[socket.id];
+    delete lastMovementAt[socket.id];
+    delete pendingMoves[socket.id];
   });
 });
 
@@ -279,6 +287,16 @@ setInterval(() => {
   const now = Date.now();
   const dt = (now - lastTickAt) / 1000;
   lastTickAt = now;
+
+  const moved: { id: string; x: number; y: number }[] = [];
+  const removed: string[] = [];
+  const hits: { playerId: string; hp: number; attackerId: string; bulletId: string }[] = [];
+  const deaths: { playerId: string; killerId: string }[] = [];
+
+  for (const id in pendingMoves) {
+    moved.push({ id, x: pendingMoves[id].x, y: pendingMoves[id].y });
+    delete pendingMoves[id];
+  }
 
   for (const id in bullets) {
     const b = bullets[id];
@@ -290,20 +308,17 @@ setInterval(() => {
       b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H
     ) {
       delete bullets[id];
-      io.emit('bulletRemoved', { id });
+      removed.push(id);
       continue;
     }
 
     let hitObstacle = false;
     for (const o of OBSTACLES) {
-      if (pointInRect(b.x, b.y, o)) {
-        hitObstacle = true;
-        break;
-      }
+      if (pointInRect(b.x, b.y, o)) { hitObstacle = true; break; }
     }
     if (hitObstacle) {
       delete bullets[id];
-      io.emit('bulletRemoved', { id });
+      removed.push(id);
       continue;
     }
 
@@ -316,23 +331,22 @@ setInterval(() => {
       const r = PLAYER_RADIUS + BULLET_RADIUS;
       if (dx * dx + dy * dy <= r * r) {
         p.hp = Math.max(0, p.hp - BULLET_DAMAGE);
-        io.emit('playerHit', {
-          playerId: p.id,
-          hp: p.hp,
-          attackerId: b.ownerId,
-          bulletId: b.id,
-        });
+        hits.push({ playerId: p.id, hp: p.hp, attackerId: b.ownerId, bulletId: b.id });
         delete bullets[id];
-        io.emit('bulletRemoved', { id });
+        removed.push(id);
         if (p.hp <= 0) {
           p.alive = false;
           const killer = players[b.ownerId];
           if (killer) killer.kills += 1;
-          io.emit('playerDied', { playerId: p.id, killerId: b.ownerId });
+          deaths.push({ playerId: p.id, killerId: b.ownerId });
         }
         break;
       }
     }
+  }
+
+  if (moved.length || removed.length || hits.length || deaths.length) {
+    io.emit('tick', { moved, removed, hits, deaths });
   }
 }, TICK_MS);
 

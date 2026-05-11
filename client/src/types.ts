@@ -56,3 +56,10 @@ export interface BulletRemovedPayload {
 export interface JoinRejectedPayload {
   reason: string;
 }
+
+export interface TickPayload {
+  moved: { id: string; x: number; y: number }[];
+  removed: string[];
+  hits: PlayerHitPayload[];
+  deaths: PlayerDiedPayload[];
+}

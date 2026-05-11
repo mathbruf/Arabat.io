@@ -7,6 +7,7 @@ import {
   PlayerData,
   PlayerDiedPayload,
   PlayerHitPayload,
+  TickPayload,
 } from './types';
 import { InputController } from './input/InputController';
 import { LocalPlayer, PLAYER_RADIUS } from './entities/LocalPlayer';
@@ -72,12 +73,9 @@ export class GameScene extends Phaser.Scene {
       onJoined: (payload) => this.handleJoined(payload),
       onJoinRejected: (payload) => this.handleJoinRejected(payload),
       onNewPlayer: (player) => this.handleNewPlayer(player),
-      onPlayerMoved: (player) => this.handlePlayerMoved(player),
+      onTick: (payload) => this.handleTick(payload),
       onUserDisconnected: (id) => this.handleDisconnect(id),
       onBulletSpawned: (bullet) => this.handleBulletSpawned(bullet),
-      onBulletRemoved: (payload) => this.handleBulletRemoved(payload),
-      onPlayerHit: (payload) => this.handlePlayerHit(payload),
-      onPlayerDied: (payload) => this.handlePlayerDied(payload),
       onPlayerRespawned: (player) => this.handlePlayerRespawned(player),
     });
 
@@ -166,7 +164,14 @@ export class GameScene extends Phaser.Scene {
     this.refreshLeaderboard();
   }
 
-  private handlePlayerMoved(player: PlayerData): void {
+  private handleTick(payload: TickPayload): void {
+    for (const move of payload.moved) this.handlePlayerMoved(move);
+    for (const id of payload.removed) this.handleBulletRemoved({ id });
+    for (const hit of payload.hits) this.handlePlayerHit(hit);
+    for (const death of payload.deaths) this.handlePlayerDied(death);
+  }
+
+  private handlePlayerMoved(player: { id: string; x: number; y: number }): void {
     if (player.id === this.selfId) return;
     const remote = this.remotePlayers.get(player.id);
     if (remote) remote.setTarget(player.x, player.y);
