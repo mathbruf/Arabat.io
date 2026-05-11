@@ -6,11 +6,287 @@
     <title>Arabat.io</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; height: 100vh; }
+      html, body { width: 100%; height: 100%; overflow: hidden; }
+      body {
+        background: #0b1023;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        color: #e6eaf2;
+      }
+      #game-root { position: fixed; inset: 0; }
       canvas { display: block; }
+
+      #hud {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        right: 12px;
+        pointer-events: none;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        font-size: 13px;
+        z-index: 5;
+      }
+      .hud-pill {
+        background: rgba(11, 16, 35, 0.6);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 8px 12px;
+        border-radius: 8px;
+        line-height: 1.4;
+      }
+      .hud-pill strong { color: #9ad1ff; font-weight: 600; }
+      .hud-pill .kbd {
+        display: inline-block;
+        padding: 1px 6px;
+        margin: 0 1px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+      }
+      #hud[hidden] { display: none; }
+
+      #leaderboard {
+        position: fixed;
+        top: 60px;
+        right: 12px;
+        min-width: 200px;
+        max-width: 240px;
+        background: rgba(11, 16, 35, 0.7);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        padding: 10px 12px 8px;
+        font-size: 12px;
+        z-index: 5;
+        pointer-events: none;
+      }
+      #leaderboard[hidden] { display: none; }
+      .lb-title {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #8a93a8;
+        margin-bottom: 6px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .lb-row {
+        display: grid;
+        grid-template-columns: 18px 1fr auto;
+        gap: 8px;
+        align-items: baseline;
+        padding: 3px 2px;
+        line-height: 1.3;
+      }
+      .lb-row .lb-rank { color: #5a6379; font-variant-numeric: tabular-nums; }
+      .lb-row .lb-name {
+        color: #e6eaf2;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .lb-row .lb-kills {
+        color: #9ad1ff;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .lb-row.lb-self .lb-name { color: #ffd479; font-weight: 600; }
+      .lb-row.lb-self .lb-rank { color: #c9a64c; }
+      .lb-empty { color: #5a6379; font-style: italic; padding: 2px; }
+
+      #menu-overlay {
+        position: fixed;
+        inset: 0;
+        background: radial-gradient(ellipse at center, rgba(40, 60, 130, 0.35) 0%, rgba(11, 16, 35, 0.92) 70%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        animation: fade-in 200ms ease-out;
+      }
+      #menu-overlay[hidden] { display: none; }
+
+      @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+
+      .menu-card {
+        background: rgba(20, 28, 56, 0.85);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 14px;
+        padding: 32px 36px;
+        width: 360px;
+        max-width: calc(100vw - 32px);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        text-align: center;
+      }
+      .menu-title {
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        margin-bottom: 6px;
+        color: #ffffff;
+      }
+      .menu-title .accent { color: #6cc6ff; }
+      .menu-sub {
+        font-size: 13px;
+        color: #8a93a8;
+        margin-bottom: 24px;
+      }
+      .menu-sub.death { color: #ff8b8b; }
+      .menu-sub.death strong { color: #ffd6d6; }
+
+      .menu-field {
+        display: block;
+        text-align: left;
+        font-size: 12px;
+        color: #8a93a8;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      #name-input {
+        width: 100%;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-size: 16px;
+        font-family: inherit;
+        color: #ffffff;
+        outline: none;
+        transition: border-color 120ms, background 120ms;
+      }
+      #name-input:focus {
+        border-color: #6cc6ff;
+        background: rgba(0, 0, 0, 0.45);
+      }
+      #name-input::placeholder { color: #5a6379; }
+
+      #menu-error {
+        min-height: 18px;
+        margin-top: 8px;
+        font-size: 12px;
+        color: #ff8b8b;
+        text-align: left;
+      }
+
+      #play-button {
+        width: 100%;
+        margin-top: 16px;
+        padding: 13px;
+        background: linear-gradient(180deg, #6cc6ff 0%, #4a9ee0 100%);
+        border: none;
+        border-radius: 8px;
+        color: #061224;
+        font-family: inherit;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+        transition: transform 80ms, filter 120ms;
+      }
+      #play-button:hover { filter: brightness(1.08); }
+      #play-button:active { transform: translateY(1px); }
+      #play-button:disabled {
+        background: #2a3550;
+        color: #5a6379;
+        cursor: not-allowed;
+      }
+
+      .menu-controls {
+        margin-top: 22px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        font-size: 12px;
+        color: #8a93a8;
+        text-align: left;
+        line-height: 1.7;
+      }
+      .menu-controls .kbd {
+        display: inline-block;
+        padding: 1px 6px;
+        margin: 0 2px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        color: #c9d2e6;
+      }
+
+      .conn-banner {
+        position: fixed;
+        bottom: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 6px 14px;
+        border-radius: 999px;
+        font-size: 12px;
+        background: rgba(255, 139, 139, 0.18);
+        color: #ffb0b0;
+        border: 1px solid rgba(255, 139, 139, 0.4);
+        z-index: 20;
+      }
+      .conn-banner[hidden] { display: none; }
     </style>
   </head>
   <body>
+    <div id="game-root"></div>
+
+    <div id="hud" hidden>
+      <div class="hud-pill">
+        Players: <strong id="hud-count">0</strong>
+      </div>
+      <div class="hud-pill">
+        Move <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>
+        &nbsp;·&nbsp; Shoot <span class="kbd">←</span><span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">→</span>
+        &nbsp;·&nbsp; Menu <span class="kbd">Esc</span>
+      </div>
+    </div>
+
+    <div id="leaderboard" hidden>
+      <div class="lb-title">Leaderboard</div>
+      <div id="leaderboard-rows"></div>
+    </div>
+
+    <div id="menu-overlay">
+      <div class="menu-card">
+        <div class="menu-title">Arabat<span class="accent">.io</span></div>
+        <div class="menu-sub" id="menu-sub">Enter your name to drop into the arena.</div>
+
+        <label class="menu-field" for="name-input">Your name</label>
+        <input
+          type="text"
+          id="name-input"
+          maxlength="16"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="e.g. Stinger"
+        />
+        <div id="menu-error"></div>
+
+        <button id="play-button" type="button">Play</button>
+
+        <div class="menu-controls">
+          <div><span class="kbd">W</span> <span class="kbd">A</span> <span class="kbd">S</span> <span class="kbd">D</span> to move</div>
+          <div><span class="kbd">←</span> <span class="kbd">↑</span> <span class="kbd">↓</span> <span class="kbd">→</span> to shoot</div>
+          <div><span class="kbd">Esc</span> to return to this menu</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="conn-banner" class="conn-banner" hidden>Disconnected — reconnecting…</div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
