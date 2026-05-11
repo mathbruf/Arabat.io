@@ -32,7 +32,7 @@ export class GameScene extends Phaser.Scene {
   create() {
     this.inputCtl = new InputController(this);
 
-    const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
+    const serverUrl = import.meta.env.VITE_SERVER_URL || window.location.origin;
     this.network = new NetworkClient(serverUrl, {
       onCurrentPlayers: (players) => this.handleCurrentPlayers(players),
       onNewPlayer: (player) => this.handleNewPlayer(player),

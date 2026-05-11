@@ -2,12 +2,15 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import cors from 'cors';
+import path from 'path';
 
 const app = express();
 app.use(cors());
 
+const clientDist = path.join(__dirname, '../../client/dist');
+app.use(express.static(clientDist));
 app.get('/', (_req, res) => {
-  res.send('arabat-io server is running');
+  res.sendFile(path.join(clientDist, 'index.html'));
 });
 
 const httpServer = createServer(app);
