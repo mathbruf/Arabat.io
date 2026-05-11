@@ -22,6 +22,7 @@ const io = new Server(httpServer, {
 
 interface Player {
   id: string;
+  name: string;
   x: number;
   y: number;
   color: number;
@@ -33,9 +34,42 @@ function randomBetween(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function randomColor(): number {
-  const colors = [0xe74c3c, 0x3498db, 0x2ecc71, 0xf39c12, 0x9b59b6, 0x1abc9c, 0xe67e22, 0xe91e63];
-  return colors[Math.floor(Math.random() * colors.length)];
+// FNV-1a hash — stable across runs, identical for identical inputs.
+function hashString(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+// Hue derived from id → all clients render the same color for the same player.
+function colorForId(id: string): number {
+  const hue = hashString(id) % 360;
+  const s = 0.65;
+  const l = 0.55;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = hue / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  let r1 = 0;
+  let g1 = 0;
+  let b1 = 0;
+  if (hp < 1) { r1 = c; g1 = x; }
+  else if (hp < 2) { r1 = x; g1 = c; }
+  else if (hp < 3) { g1 = c; b1 = x; }
+  else if (hp < 4) { g1 = x; b1 = c; }
+  else if (hp < 5) { r1 = x; b1 = c; }
+  else { r1 = c; b1 = x; }
+  const m = l - c / 2;
+  const r = Math.round((r1 + m) * 255);
+  const g = Math.round((g1 + m) * 255);
+  const b = Math.round((b1 + m) * 255);
+  return (r << 16) | (g << 8) | b;
+}
+
+function nameForId(id: string): string {
+  return `P-${id.substring(0, 4)}`;
 }
 
 io.on('connection', (socket: Socket) => {
@@ -43,9 +77,10 @@ io.on('connection', (socket: Socket) => {
 
   const newPlayer: Player = {
     id: socket.id,
+    name: nameForId(socket.id),
     x: randomBetween(100, 700),
     y: randomBetween(100, 500),
-    color: randomColor(),
+    color: colorForId(socket.id),
   };
   players[socket.id] = newPlayer;
 
