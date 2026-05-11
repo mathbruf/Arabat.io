@@ -66,4 +66,8 @@ export class NetworkClient {
   respawn(name: string): void {
     this.socket.emit('respawn', { name });
   }
+
+  leaveGame(): void {
+    this.socket.emit('leaveGame');
+  }
 }

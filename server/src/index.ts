@@ -25,7 +25,7 @@ const BULLET_RADIUS = 4;
 const BULLET_SPEED = 600;
 const BULLET_LIFETIME_MS = 1500;
 const BULLET_DAMAGE = 20;
-const SHOOT_COOLDOWN_MS = 250;
+const SHOOT_COOLDOWN_MS = 500;
 const TICK_HZ = 30;
 const TICK_MS = 1000 / TICK_HZ;
 const NAME_MAX_LEN = 16;
@@ -39,6 +39,7 @@ interface Player {
   hp: number;
   maxHp: number;
   alive: boolean;
+  kills: number;
 }
 
 interface Bullet {
@@ -52,6 +53,25 @@ interface Bullet {
   spawnedAt: number;
 }
 
+interface Obstacle {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+const OBSTACLES: Obstacle[] = [
+  { id: 'o1', x: 180, y: 160, w: 120, h: 60 },
+  { id: 'o2', x: 980, y: 160, w: 120, h: 60 },
+  { id: 'o3', x: 180, y: 500, w: 120, h: 60 },
+  { id: 'o4', x: 980, y: 500, w: 120, h: 60 },
+  { id: 'o5', x: 560, y: 80, w: 160, h: 50 },
+  { id: 'o6', x: 560, y: 590, w: 160, h: 50 },
+  { id: 'o7', x: 460, y: 320, w: 80, h: 80 },
+  { id: 'o8', x: 740, y: 320, w: 80, h: 80 },
+];
+
 const players: Record<string, Player> = {};
 const bullets: Record<string, Bullet> = {};
 const lastShotAt: Record<string, number> = {};
@@ -61,12 +81,34 @@ function randomBetween(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+function circleRectOverlap(cx: number, cy: number, r: number, o: Obstacle): boolean {
+  const closestX = Math.max(o.x, Math.min(cx, o.x + o.w));
+  const closestY = Math.max(o.y, Math.min(cy, o.y + o.h));
+  const dx = cx - closestX;
+  const dy = cy - closestY;
+  return dx * dx + dy * dy < r * r;
+}
+
+function pointInRect(px: number, py: number, o: Obstacle): boolean {
+  return px >= o.x && px <= o.x + o.w && py >= o.y && py <= o.y + o.h;
+}
+
+function positionFreeForPlayer(x: number, y: number): boolean {
+  for (const o of OBSTACLES) {
+    if (circleRectOverlap(x, y, PLAYER_RADIUS, o)) return false;
+  }
+  return true;
+}
+
 function randomSpawn(): { x: number; y: number } {
   const pad = PLAYER_RADIUS * 4;
-  return {
-    x: randomBetween(pad, WORLD_W - pad),
-    y: randomBetween(pad, WORLD_H - pad),
-  };
+  for (let i = 0; i < 32; i++) {
+    const x = randomBetween(pad, WORLD_W - pad);
+    const y = randomBetween(pad, WORLD_H - pad);
+    if (positionFreeForPlayer(x, y)) return { x, y };
+  }
+  // Fallback: world center (kept free by obstacle layout).
+  return { x: WORLD_W / 2, y: WORLD_H / 2 };
 }
 
 // FNV-1a — stable hash across runs, identical for identical inputs.
@@ -138,12 +180,14 @@ io.on('connection', (socket: Socket) => {
       hp: MAX_HP,
       maxHp: MAX_HP,
       alive: true,
+      kills: 0,
     };
     players[socket.id] = player;
     socket.emit('joined', {
       self: player,
       players,
       bullets: Object.values(bullets),
+      obstacles: OBSTACLES,
       world: { width: WORLD_W, height: WORLD_H },
     });
     socket.broadcast.emit('newPlayer', player);
@@ -155,8 +199,20 @@ io.on('connection', (socket: Socket) => {
     if (!player || !player.alive) return;
     if (typeof data?.x !== 'number' || typeof data?.y !== 'number') return;
     const clamped = clampToWorld(data.x, data.y);
-    player.x = clamped.x;
-    player.y = clamped.y;
+    // Slide along obstacles: take whichever single axis is free.
+    let nx = clamped.x;
+    let ny = clamped.y;
+    if (!positionFreeForPlayer(nx, ny)) {
+      if (positionFreeForPlayer(nx, player.y)) {
+        ny = player.y;
+      } else if (positionFreeForPlayer(player.x, ny)) {
+        nx = player.x;
+      } else {
+        return; // movement fully blocked; ignore
+      }
+    }
+    player.x = nx;
+    player.y = ny;
     socket.broadcast.emit('playerMoved', player);
   });
 
@@ -200,6 +256,14 @@ io.on('connection', (socket: Socket) => {
     console.log(`Player respawned: ${player.name} (${socket.id})`);
   });
 
+  socket.on('leaveGame', () => {
+    if (!players[socket.id]) return;
+    delete players[socket.id];
+    delete lastShotAt[socket.id];
+    io.emit('userDisconnected', socket.id);
+    console.log(`Player left: ${socket.id}`);
+  });
+
   socket.on('disconnect', () => {
     console.log(`Socket disconnected: ${socket.id}`);
     if (players[socket.id]) {
@@ -230,6 +294,19 @@ setInterval(() => {
       continue;
     }
 
+    let hitObstacle = false;
+    for (const o of OBSTACLES) {
+      if (pointInRect(b.x, b.y, o)) {
+        hitObstacle = true;
+        break;
+      }
+    }
+    if (hitObstacle) {
+      delete bullets[id];
+      io.emit('bulletRemoved', { id });
+      continue;
+    }
+
     for (const pid in players) {
       if (pid === b.ownerId) continue;
       const p = players[pid];
@@ -249,6 +326,8 @@ setInterval(() => {
         io.emit('bulletRemoved', { id });
         if (p.hp <= 0) {
           p.alive = false;
+          const killer = players[b.ownerId];
+          if (killer) killer.kills += 1;
           io.emit('playerDied', { playerId: p.id, killerId: b.ownerId });
         }
         break;

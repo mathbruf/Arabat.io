@@ -1,6 +1,7 @@
 import { PlayerData } from '../types';
 import { InputController } from '../input/InputController';
 import { PlayerAvatar, PLAYER_RADIUS } from './PlayerAvatar';
+import { Obstacle } from './Obstacle';
 
 export { PLAYER_RADIUS };
 
@@ -12,6 +13,7 @@ export class LocalPlayer {
   private input: InputController;
   private worldW: number;
   private worldH: number;
+  private obstacles: Obstacle[];
   private x: number;
   private y: number;
 
@@ -20,11 +22,13 @@ export class LocalPlayer {
     data: PlayerData,
     input: InputController,
     world: { width: number; height: number },
+    obstacles: Obstacle[],
   ) {
     this.id = data.id;
     this.input = input;
     this.worldW = world.width;
     this.worldH = world.height;
+    this.obstacles = obstacles;
     this.x = data.x;
     this.y = data.y;
     this.avatar = new PlayerAvatar(scene, data, true);
@@ -33,13 +37,26 @@ export class LocalPlayer {
   update(deltaSeconds: number): void {
     const dir = this.input.getMoveDirection();
     if (dir.x === 0 && dir.y === 0) return;
-    let nx = this.x + dir.x * SPEED * deltaSeconds;
-    let ny = this.y + dir.y * SPEED * deltaSeconds;
-    nx = clamp(nx, PLAYER_RADIUS, this.worldW - PLAYER_RADIUS);
-    ny = clamp(ny, PLAYER_RADIUS, this.worldH - PLAYER_RADIUS);
+    const step = SPEED * deltaSeconds;
+
+    // Step axes separately so the player slides along obstacles.
+    let nx = clamp(this.x + dir.x * step, PLAYER_RADIUS, this.worldW - PLAYER_RADIUS);
+    if (this.collidesAt(nx, this.y)) nx = this.x;
+
+    let ny = clamp(this.y + dir.y * step, PLAYER_RADIUS, this.worldH - PLAYER_RADIUS);
+    if (this.collidesAt(nx, ny)) ny = this.y;
+
+    if (nx === this.x && ny === this.y) return;
     this.x = nx;
     this.y = ny;
     this.avatar.setPosition(nx, ny);
+  }
+
+  private collidesAt(x: number, y: number): boolean {
+    for (const o of this.obstacles) {
+      if (o.overlapsCircle(x, y, PLAYER_RADIUS)) return true;
+    }
+    return false;
   }
 
   get position(): { x: number; y: number } {

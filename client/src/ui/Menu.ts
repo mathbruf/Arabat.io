@@ -7,6 +7,12 @@ export interface MenuDeathContext {
   killerName: string | null;
 }
 
+export interface LeaderboardEntry {
+  id: string;
+  name: string;
+  kills: number;
+}
+
 export class Menu {
   private overlay: HTMLDivElement;
   private subEl: HTMLDivElement;
@@ -16,6 +22,8 @@ export class Menu {
   private hud: HTMLDivElement;
   private hudCount: HTMLElement;
   private connBanner: HTMLDivElement;
+  private leaderboard: HTMLDivElement;
+  private leaderboardRows: HTMLDivElement;
 
   constructor(private onSubmit: (name: string) => void) {
     this.overlay = mustGet<HTMLDivElement>('menu-overlay');
@@ -26,6 +34,8 @@ export class Menu {
     this.hud = mustGet<HTMLDivElement>('hud');
     this.hudCount = mustGet<HTMLElement>('hud-count');
     this.connBanner = mustGet<HTMLDivElement>('conn-banner');
+    this.leaderboard = mustGet<HTMLDivElement>('leaderboard');
+    this.leaderboardRows = mustGet<HTMLDivElement>('leaderboard-rows');
 
     this.button.addEventListener('click', () => this.submit());
     this.input.addEventListener('keydown', (e) => {
@@ -53,6 +63,7 @@ export class Menu {
     }
     this.overlay.hidden = false;
     this.hud.hidden = true;
+    this.leaderboard.hidden = true;
     this.clearError();
     requestAnimationFrame(() => {
       this.input.focus();
@@ -63,6 +74,26 @@ export class Menu {
   hide(): void {
     this.overlay.hidden = true;
     this.hud.hidden = false;
+    this.leaderboard.hidden = false;
+  }
+
+  setLeaderboard(entries: LeaderboardEntry[], selfId: string | undefined): void {
+    if (entries.length === 0) {
+      this.leaderboardRows.innerHTML = '<div class="lb-empty">No players yet.</div>';
+      return;
+    }
+    const max = Math.min(8, entries.length);
+    let html = '';
+    for (let i = 0; i < max; i++) {
+      const e = entries[i];
+      const isSelf = e.id === selfId;
+      html += `<div class="lb-row${isSelf ? ' lb-self' : ''}">`;
+      html += `<span class="lb-rank">${i + 1}.</span>`;
+      html += `<span class="lb-name">${escapeHtml(e.name)}</span>`;
+      html += `<span class="lb-kills">${e.kills}</span>`;
+      html += `</div>`;
+    }
+    this.leaderboardRows.innerHTML = html;
   }
 
   setError(msg: string): void {

@@ -12,13 +12,14 @@ import { InputController } from './input/InputController';
 import { LocalPlayer, PLAYER_RADIUS } from './entities/LocalPlayer';
 import { RemotePlayer } from './entities/RemotePlayer';
 import { Bullet, ensureBulletTexture } from './entities/Bullet';
+import { Obstacle } from './entities/Obstacle';
 import { NetworkClient } from './net/NetworkClient';
 import { Menu } from './ui/Menu';
 import { WORLD_WIDTH, WORLD_HEIGHT } from './constants';
 
 const POSITION_SEND_HZ = 20;
 const SEND_INTERVAL_MS = 1000 / POSITION_SEND_HZ;
-const SHOOT_COOLDOWN_MS = 250;
+const SHOOT_COOLDOWN_MS = 500;
 
 export class GameScene extends Phaser.Scene {
   private inputCtl!: InputController;
@@ -31,6 +32,8 @@ export class GameScene extends Phaser.Scene {
 
   private remotePlayers = new Map<string, RemotePlayer>();
   private bullets = new Map<string, Bullet>();
+  private obstacles: Obstacle[] = [];
+  private kills = new Map<string, { name: string; kills: number }>();
 
   private sendAccumMs = 0;
   private lastSentX = Number.NaN;
@@ -78,6 +81,10 @@ export class GameScene extends Phaser.Scene {
       onPlayerRespawned: (player) => this.handlePlayerRespawned(player),
     });
 
+    this.input.keyboard!.on('keydown-ESC', () => {
+      if (this.localPlayer) this.leaveToMenu();
+    });
+
     this.menu.show('intro');
   }
 
@@ -119,17 +126,27 @@ export class GameScene extends Phaser.Scene {
     this.menu.resetBusy();
     this.lastSelfName = payload.self.name;
 
-    this.localPlayer = new LocalPlayer(this, payload.self, this.inputCtl, payload.world);
+    this.spawnObstacles(payload.obstacles);
+    this.localPlayer = new LocalPlayer(
+      this,
+      payload.self,
+      this.inputCtl,
+      payload.world,
+      this.obstacles,
+    );
     this.lastSentX = payload.self.x;
     this.lastSentY = payload.self.y;
 
+    this.kills.clear();
     for (const player of Object.values(payload.players)) {
+      this.kills.set(player.id, { name: player.name, kills: player.kills });
       if (player.id !== payload.self.id) this.spawnRemote(player);
     }
     for (const bullet of payload.bullets) {
       this.spawnBullet(bullet);
     }
     this.refreshPlayerCount();
+    this.refreshLeaderboard();
   }
 
   private handleJoinRejected(payload: JoinRejectedPayload): void {
@@ -144,7 +161,9 @@ export class GameScene extends Phaser.Scene {
   private handleNewPlayer(player: PlayerData): void {
     if (player.id === this.selfId) return;
     this.spawnRemote(player);
+    this.kills.set(player.id, { name: player.name, kills: player.kills });
     this.refreshPlayerCount();
+    this.refreshLeaderboard();
   }
 
   private handlePlayerMoved(player: PlayerData): void {
@@ -159,7 +178,9 @@ export class GameScene extends Phaser.Scene {
       remote.destroy();
       this.remotePlayers.delete(id);
     }
+    this.kills.delete(id);
     this.refreshPlayerCount();
+    this.refreshLeaderboard();
   }
 
   private handleBulletSpawned(bullet: BulletData): void {
@@ -188,6 +209,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handlePlayerDied(payload: PlayerDiedPayload): void {
+    const killerEntry = this.kills.get(payload.killerId);
+    if (killerEntry) killerEntry.kills += 1;
+    this.refreshLeaderboard();
+
     if (payload.playerId === this.selfId) {
       const killerName = this.lookupName(payload.killerId);
       this.localPlayer?.destroy();
@@ -200,12 +225,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handlePlayerRespawned(player: PlayerData): void {
+    const entry = this.kills.get(player.id);
+    if (entry) entry.name = player.name;
+    this.refreshLeaderboard();
+
     if (player.id === this.selfId) {
       this.localPlayer = new LocalPlayer(
         this,
         player,
         this.inputCtl,
         { width: WORLD_WIDTH, height: WORLD_HEIGHT },
+        this.obstacles,
       );
       this.lastSentX = player.x;
       this.lastSentY = player.y;
@@ -243,6 +273,40 @@ export class GameScene extends Phaser.Scene {
     // +1 for the local player when alive (not in remote map).
     const localAlive = this.localPlayer ? 1 : 0;
     this.menu.setPlayerCount(this.remotePlayers.size + localAlive);
+  }
+
+  private refreshLeaderboard(): void {
+    const entries = Array.from(this.kills.entries()).map(([id, v]) => ({
+      id,
+      name: v.name,
+      kills: v.kills,
+    }));
+    entries.sort((a, b) =>
+      b.kills - a.kills || a.name.localeCompare(b.name),
+    );
+    this.menu.setLeaderboard(entries, this.selfId);
+  }
+
+  private spawnObstacles(obstacleData: { id: string; x: number; y: number; w: number; h: number }[]): void {
+    for (const o of this.obstacles) o.destroy();
+    this.obstacles = obstacleData.map((d) => new Obstacle(this, d));
+  }
+
+  private leaveToMenu(): void {
+    this.network.leaveGame();
+    this.localPlayer?.destroy();
+    this.localPlayer = undefined;
+    for (const r of this.remotePlayers.values()) r.destroy();
+    this.remotePlayers.clear();
+    for (const b of this.bullets.values()) b.destroy();
+    this.bullets.clear();
+    for (const o of this.obstacles) o.destroy();
+    this.obstacles = [];
+    this.kills.clear();
+    this.selfId = undefined;
+    this.refreshLeaderboard();
+    this.menu.setPlayerCount(0);
+    this.menu.show('intro');
   }
 
   private maybeSendPosition(deltaMs: number): void {
