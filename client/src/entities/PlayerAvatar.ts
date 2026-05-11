@@ -94,6 +94,12 @@ export class PlayerAvatar {
     this.drawHpBar(this.sprite.x, this.sprite.y);
   }
 
+  setStats(hp: number, maxHp: number): void {
+    this.maxHp = maxHp;
+    this.hp = Math.max(0, Math.min(maxHp, hp));
+    this.drawHpBar(this.sprite.x, this.sprite.y);
+  }
+
   setName(name: string): void {
     this.label.setText(name);
   }

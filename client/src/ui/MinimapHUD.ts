@@ -3,7 +3,7 @@ import { RemotePlayer } from '../entities/RemotePlayer';
 
 const MM_WIDTH = 200;
 const MM_HEIGHT = 113; // 16:9 to match world aspect
-const PADDING = 12;
+const PADDING = 60;
 
 export class MinimapHUD {
   private gfx: Phaser.GameObjects.Graphics;

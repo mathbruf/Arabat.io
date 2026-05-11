@@ -5,7 +5,7 @@ import { Obstacle } from './Obstacle';
 
 export { PLAYER_RADIUS };
 
-const SPEED = 240;
+const BASE_SPEED = 240;
 
 export class LocalPlayer {
   readonly id: string;
@@ -16,6 +16,7 @@ export class LocalPlayer {
   private obstacles: Obstacle[];
   private x: number;
   private y: number;
+  private speed = BASE_SPEED;
 
   constructor(
     scene: Phaser.Scene,
@@ -39,7 +40,7 @@ export class LocalPlayer {
     const moving = dir.x !== 0 || dir.y !== 0;
 
     if (moving) {
-      const step = SPEED * deltaSeconds;
+      const step = this.speed * deltaSeconds;
       let nx = clamp(this.x + dir.x * step, PLAYER_RADIUS, this.worldW - PLAYER_RADIUS);
       if (this.collidesAt(nx, this.y)) nx = this.x;
       let ny = clamp(this.y + dir.y * step, PLAYER_RADIUS, this.worldH - PLAYER_RADIUS);
@@ -81,6 +82,14 @@ export class LocalPlayer {
 
   setHp(hp: number): void {
     this.avatar.setHp(hp);
+  }
+
+  setStats(hp: number, maxHp: number): void {
+    this.avatar.setStats(hp, maxHp);
+  }
+
+  increaseSpeed(factor: number): void {
+    this.speed *= (1 + factor);
   }
 
   flash(): void {

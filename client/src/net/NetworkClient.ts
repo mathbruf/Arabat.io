@@ -4,7 +4,9 @@ import type {
   JoinRejectedPayload,
   JoinedPayload,
   PlayerData,
+  PlayerStatsPayload,
   TickPayload,
+  UpgradeType,
 } from '../types';
 
 export interface NetworkHandlers {
@@ -15,6 +17,7 @@ export interface NetworkHandlers {
   onUserDisconnected: (id: string) => void;
   onBulletSpawned: (bullet: BulletData) => void;
   onPlayerRespawned: (player: PlayerData) => void;
+  onPlayerStatsUpdated: (payload: PlayerStatsPayload) => void;
   onConnect: () => void;
   onDisconnect: () => void;
 }
@@ -33,6 +36,7 @@ export class NetworkClient {
     this.socket.on('userDisconnected', handlers.onUserDisconnected);
     this.socket.on('bulletSpawned', handlers.onBulletSpawned);
     this.socket.on('playerRespawned', handlers.onPlayerRespawned);
+    this.socket.on('playerStatsUpdated', handlers.onPlayerStatsUpdated);
   }
 
   get id(): string | undefined {
@@ -61,5 +65,9 @@ export class NetworkClient {
 
   leaveGame(): void {
     this.socket.emit('leaveGame');
+  }
+
+  sendUpgrade(type: UpgradeType): void {
+    this.socket.emit('upgrade', { type });
   }
 }

@@ -48,6 +48,10 @@ export class RemotePlayer {
     this.avatar.setHp(hp);
   }
 
+  setStats(hp: number, maxHp: number): void {
+    this.avatar.setStats(hp, maxHp);
+  }
+
   flash(): void {
     this.avatar.flash();
   }

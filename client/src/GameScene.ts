@@ -7,7 +7,9 @@ import {
   PlayerData,
   PlayerDiedPayload,
   PlayerHitPayload,
+  PlayerStatsPayload,
   TickPayload,
+  UpgradeType,
 } from './types';
 import { InputController } from './input/InputController';
 import { LocalPlayer } from './entities/LocalPlayer';
@@ -17,6 +19,7 @@ import { Obstacle } from './entities/Obstacle';
 import { NetworkClient } from './net/NetworkClient';
 import { Menu } from './ui/Menu';
 import { MinimapHUD } from './ui/MinimapHUD';
+import { XpHUD } from './ui/XpHUD';
 import { WORLD_WIDTH, WORLD_HEIGHT } from './constants';
 
 const POSITION_SEND_HZ = 20;
@@ -28,6 +31,7 @@ export class GameScene extends Phaser.Scene {
   private network!: NetworkClient;
   private menu!: Menu;
   private minimap!: MinimapHUD;
+  private xpHUD!: XpHUD;
 
   private localPlayer?: LocalPlayer;
   private selfId?: string;
@@ -67,6 +71,7 @@ export class GameScene extends Phaser.Scene {
     this.menu = new Menu((name) => this.handleMenuSubmit(name));
     this.minimap = new MinimapHUD(this, WORLD_WIDTH, WORLD_HEIGHT);
     this.minimap.setVisible(false);
+    this.xpHUD = new XpHUD((type) => this.handleUpgrade(type));
 
     const serverUrl =
       import.meta.env.VITE_SERVER_URL ??
@@ -85,6 +90,7 @@ export class GameScene extends Phaser.Scene {
       onUserDisconnected: (id) => this.handleDisconnect(id),
       onBulletSpawned: (bullet) => this.handleBulletSpawned(bullet),
       onPlayerRespawned: (player) => this.handlePlayerRespawned(player),
+      onPlayerStatsUpdated: (payload) => this.handlePlayerStatsUpdated(payload),
     });
 
     this.input.keyboard!.on('keydown-ESC', () => {
@@ -157,6 +163,8 @@ export class GameScene extends Phaser.Scene {
 
     this.cameras.main.startFollow(this.localPlayer.getSprite(), true, 0.12, 0.12);
     this.minimap.setVisible(true);
+    this.xpHUD.show();
+    this.xpHUD.reset();
 
     this.kills.clear();
     for (const player of Object.values(payload.players)) {
@@ -241,10 +249,15 @@ export class GameScene extends Phaser.Scene {
     if (killerEntry) killerEntry.kills += 1;
     this.refreshLeaderboard();
 
+    if (payload.killerId === this.selfId) {
+      this.xpHUD.onKill();
+    }
+
     if (payload.playerId === this.selfId) {
       const killerName = this.lookupName(payload.killerId);
       this.cameras.main.stopFollow();
       this.minimap.setVisible(false);
+      this.xpHUD.hide();
       this.localPlayer?.destroy();
       this.localPlayer = undefined;
       this.menu.show('death', { killerName });
@@ -271,6 +284,8 @@ export class GameScene extends Phaser.Scene {
       this.lastSentY = player.y;
       this.cameras.main.startFollow(this.localPlayer.getSprite(), true, 0.12, 0.12);
       this.minimap.setVisible(true);
+      this.xpHUD.show();
+      this.xpHUD.reset();
       this.menu.hide();
       this.menu.resetBusy();
     } else {
@@ -326,6 +341,7 @@ export class GameScene extends Phaser.Scene {
   private leaveToMenu(): void {
     this.cameras.main.stopFollow();
     this.minimap.setVisible(false);
+    this.xpHUD.hide();
     this.network.leaveGame();
     this.localPlayer?.destroy();
     this.localPlayer = undefined;
@@ -364,6 +380,22 @@ export class GameScene extends Phaser.Scene {
     if (now - this.lastShootAtMs < SHOOT_COOLDOWN_MS) return;
     this.lastShootAtMs = now;
     this.network.shoot(dir.x, dir.y);
+  }
+
+  private handleUpgrade(type: UpgradeType): void {
+    if (type === 'speed') {
+      this.localPlayer?.increaseSpeed(0.15);
+    } else {
+      this.network.sendUpgrade(type);
+    }
+  }
+
+  private handlePlayerStatsUpdated(payload: PlayerStatsPayload): void {
+    if (payload.playerId === this.selfId) {
+      this.localPlayer?.setStats(payload.hp, payload.maxHp);
+    } else {
+      this.remotePlayers.get(payload.playerId)?.setStats(payload.hp, payload.maxHp);
+    }
   }
 
   private setupBackground(): void {

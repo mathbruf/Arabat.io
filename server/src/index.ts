@@ -40,6 +40,7 @@ interface Player {
   maxHp: number;
   alive: boolean;
   kills: number;
+  damageMultiplier: number;
 }
 
 interface Bullet {
@@ -229,6 +230,7 @@ io.on('connection', (socket: Socket) => {
       maxHp: MAX_HP,
       alive: true,
       kills: 0,
+      damageMultiplier: 1,
     };
     players[socket.id] = player;
     socket.emit('joined', {
@@ -301,9 +303,25 @@ io.on('connection', (socket: Socket) => {
     player.x = spawn.x;
     player.y = spawn.y;
     player.hp = MAX_HP;
+    player.maxHp = MAX_HP;
+    player.damageMultiplier = 1;
     player.alive = true;
     io.emit('playerRespawned', player);
     console.log(`Player respawned: ${player.name} (${socket.id})`);
+  });
+
+  socket.on('upgrade', (data: unknown) => {
+    const player = players[socket.id];
+    if (!player || !player.alive) return;
+    const type = (data as { type?: string })?.type;
+    if (type === 'health') {
+      player.maxHp *= 1.25;
+      player.hp = player.maxHp;
+      io.emit('playerStatsUpdated', { playerId: player.id, hp: player.hp, maxHp: player.maxHp });
+    } else if (type === 'damage') {
+      player.damageMultiplier = player.damageMultiplier + 0.25;
+    }
+    // 'speed' is handled client-side only
   });
 
   socket.on('leaveGame', () => {
@@ -376,7 +394,9 @@ setInterval(() => {
       const dy = p.y - b.y;
       const r = PLAYER_RADIUS + BULLET_RADIUS;
       if (dx * dx + dy * dy <= r * r) {
-        p.hp = Math.max(0, p.hp - BULLET_DAMAGE);
+        const owner = players[b.ownerId];
+        const dmg = Math.round(BULLET_DAMAGE * (owner?.damageMultiplier ?? 1));
+        p.hp = Math.max(0, p.hp - dmg);
         hits.push({ playerId: p.id, hp: p.hp, attackerId: b.ownerId, bulletId: b.id });
         delete bullets[id];
         removed.push(id);

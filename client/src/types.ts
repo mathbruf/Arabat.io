@@ -63,3 +63,11 @@ export interface TickPayload {
   hits: PlayerHitPayload[];
   deaths: PlayerDiedPayload[];
 }
+
+export type UpgradeType = 'health' | 'damage' | 'speed';
+
+export interface PlayerStatsPayload {
+  playerId: string;
+  hp: number;
+  maxHp: number;
+}
