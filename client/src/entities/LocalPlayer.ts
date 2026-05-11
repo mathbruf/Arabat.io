@@ -34,22 +34,28 @@ export class LocalPlayer {
     this.avatar = new PlayerAvatar(scene, data, true);
   }
 
-  update(deltaSeconds: number): void {
+  update(deltaSeconds: number, shootDir?: { x: number; y: number } | null): void {
     const dir = this.input.getMoveDirection();
-    if (dir.x === 0 && dir.y === 0) return;
-    const step = SPEED * deltaSeconds;
+    const moving = dir.x !== 0 || dir.y !== 0;
 
-    // Step axes separately so the player slides along obstacles.
-    let nx = clamp(this.x + dir.x * step, PLAYER_RADIUS, this.worldW - PLAYER_RADIUS);
-    if (this.collidesAt(nx, this.y)) nx = this.x;
+    if (moving) {
+      const step = SPEED * deltaSeconds;
+      let nx = clamp(this.x + dir.x * step, PLAYER_RADIUS, this.worldW - PLAYER_RADIUS);
+      if (this.collidesAt(nx, this.y)) nx = this.x;
+      let ny = clamp(this.y + dir.y * step, PLAYER_RADIUS, this.worldH - PLAYER_RADIUS);
+      if (this.collidesAt(nx, ny)) ny = this.y;
+      if (nx !== this.x || ny !== this.y) {
+        this.x = nx;
+        this.y = ny;
+        this.avatar.setPosition(nx, ny);
+      }
+    }
 
-    let ny = clamp(this.y + dir.y * step, PLAYER_RADIUS, this.worldH - PLAYER_RADIUS);
-    if (this.collidesAt(nx, ny)) ny = this.y;
-
-    if (nx === this.x && ny === this.y) return;
-    this.x = nx;
-    this.y = ny;
-    this.avatar.setPosition(nx, ny);
+    if (shootDir && (shootDir.x !== 0 || shootDir.y !== 0)) {
+      this.avatar.setFacing(shootDir.x, shootDir.y);
+    } else if (moving) {
+      this.avatar.setFacing(dir.x, dir.y);
+    }
   }
 
   private collidesAt(x: number, y: number): boolean {
@@ -61,6 +67,10 @@ export class LocalPlayer {
 
   get position(): { x: number; y: number } {
     return { x: this.x, y: this.y };
+  }
+
+  getSprite(): Phaser.GameObjects.Sprite {
+    return this.avatar.getSprite();
   }
 
   applyServerPosition(x: number, y: number): void {

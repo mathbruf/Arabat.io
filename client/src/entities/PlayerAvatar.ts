@@ -2,17 +2,38 @@ import Phaser from 'phaser';
 import { PlayerData } from '../types';
 
 export const PLAYER_RADIUS = 16;
-const LABEL_OFFSET_Y = 38;
-const HPBAR_OFFSET_Y = 24;
+const LABEL_OFFSET_Y = 36;
+const HPBAR_OFFSET_Y = 22;
 const HPBAR_WIDTH = 36;
 const HPBAR_HEIGHT = 5;
+const SPRITE_SCALE = 0.75;
+
+
+const FRAMES = [
+  'survivor1_gun.png',
+  'hitman1_gun.png',
+  'manBlue_gun.png',
+  'manBrown_gun.png',
+  'manOld_gun.png',
+  'robot1_gun.png',
+  'soldier1_gun.png',
+  'womanGreen_gun.png',
+  'zombie1_gun.png',
+];
+
+function frameForId(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return FRAMES[Math.abs(h) % FRAMES.length];
+}
 
 export class PlayerAvatar {
   readonly id: string;
   private scene: Phaser.Scene;
-  private color: number;
+  private readonly _color: number;
+  private readonly isLocal: boolean;
   private sprite: Phaser.GameObjects.Sprite;
-  private ring?: Phaser.GameObjects.Graphics;
+  private ring: Phaser.GameObjects.Graphics;
   private label: Phaser.GameObjects.Text;
   private hpBar: Phaser.GameObjects.Graphics;
   private hp: number;
@@ -22,20 +43,20 @@ export class PlayerAvatar {
   constructor(scene: Phaser.Scene, data: PlayerData, isLocal: boolean) {
     this.id = data.id;
     this.scene = scene;
-    this.color = data.color;
+    this._color = data.color;
+    this.isLocal = isLocal;
     this.hp = data.hp;
     this.maxHp = data.maxHp;
 
-    this.sprite = scene.add.sprite(data.x, data.y, 'circle');
-    this.sprite.setTint(data.color);
+    const frame = isLocal ? 'survivor1_gun.png' : frameForId(data.id);
+    this.sprite = scene.add.sprite(data.x, data.y, 'characters', frame);
+    this.sprite.setScale(SPRITE_SCALE);
     this.sprite.setDepth(2);
     if (!isLocal) this.sprite.setAlpha(0.92);
 
-    if (isLocal) {
-      this.ring = scene.add.graphics();
-      this.ring.setDepth(1);
-      this.drawRing(data.x, data.y);
-    }
+    this.ring = scene.add.graphics();
+    this.ring.setDepth(1);
+    this.redrawRing(data.x, data.y);
 
     this.label = scene.add
       .text(data.x, data.y - LABEL_OFFSET_Y, data.name, {
@@ -58,7 +79,14 @@ export class PlayerAvatar {
     this.sprite.setPosition(x, y);
     this.label.setPosition(x, y - LABEL_OFFSET_Y);
     this.drawHpBar(x, y);
-    if (this.ring) this.drawRing(x, y);
+    this.ring.clear();
+    this.redrawRing(x, y);
+  }
+
+  /** dx/dy: any direction vector; rotates sprite to face that direction. */
+  setFacing(dx: number, dy: number): void {
+    if (dx === 0 && dy === 0) return;
+    this.sprite.setRotation(Math.atan2(dy, dx));
   }
 
   setHp(hp: number): void {
@@ -79,11 +107,13 @@ export class PlayerAvatar {
       duration: 180,
       onUpdate: (tween) => {
         const t = tween.getValue() ?? 1;
-        const blended = blendColors(0xffffff, this.color, t);
-        this.sprite.setTint(blended);
+        // Fade white tint back to no tint by blending toward pure white then clearing
+        const alpha = 1 - t;
+        this.sprite.setAlpha(this.isLocal ? 1 : 0.92 + 0.08 * (1 - alpha));
       },
       onComplete: () => {
-        this.sprite.setTint(this.color);
+        this.sprite.clearTint();
+        this.sprite.setAlpha(this.isLocal ? 1 : 0.92);
       },
     });
   }
@@ -92,18 +122,31 @@ export class PlayerAvatar {
     this.sprite.setVisible(visible);
     this.label.setVisible(visible);
     this.hpBar.setVisible(visible);
-    if (this.ring) this.ring.setVisible(visible);
+    this.ring.setVisible(visible);
   }
 
   get x(): number { return this.sprite.x; }
   get y(): number { return this.sprite.y; }
+  get color(): number { return this._color; }
+  getSprite(): Phaser.GameObjects.Sprite { return this.sprite; }
 
   destroy(): void {
     this.flashTween?.stop();
     this.sprite.destroy();
     this.label.destroy();
     this.hpBar.destroy();
-    this.ring?.destroy();
+    this.ring.destroy();
+  }
+
+  private redrawRing(x: number, y: number): void {
+    const g = this.ring;
+    if (this.isLocal) {
+      g.lineStyle(2.5, 0xffffff, 0.9);
+      g.strokeCircle(x, y, PLAYER_RADIUS + 4);
+    } else {
+      g.lineStyle(2, this._color, 0.8);
+      g.strokeCircle(x, y, PLAYER_RADIUS + 2);
+    }
   }
 
   private drawHpBar(x: number, y: number): void {
@@ -117,42 +160,18 @@ export class PlayerAvatar {
 
     g.fillStyle(0x000000, 0.55);
     g.fillRoundedRect(left - 1, top - 1, w + 2, h + 2, 2);
-
     g.fillStyle(0x1c2540, 1);
     g.fillRoundedRect(left, top, w, h, 1.5);
-
     const fillW = Math.max(0, Math.round(w * ratio));
     if (fillW > 0) {
-      const fillColor = hpColorAt(ratio);
-      g.fillStyle(fillColor, 1);
+      g.fillStyle(hpColorAt(ratio), 1);
       g.fillRoundedRect(left, top, fillW, h, 1.5);
     }
-  }
-
-  private drawRing(x: number, y: number): void {
-    const g = this.ring!;
-    g.clear();
-    g.lineStyle(2.5, 0xffffff, 0.9);
-    g.strokeCircle(x, y, PLAYER_RADIUS + 3);
   }
 }
 
 function hpColorAt(ratio: number): number {
-  // Green > yellow > red.
   if (ratio > 0.6) return 0x67e08a;
   if (ratio > 0.3) return 0xf2c94c;
   return 0xff6b6b;
-}
-
-function blendColors(a: number, b: number, t: number): number {
-  const ar = (a >> 16) & 0xff;
-  const ag = (a >> 8) & 0xff;
-  const ab = a & 0xff;
-  const br = (b >> 16) & 0xff;
-  const bg = (b >> 8) & 0xff;
-  const bb = b & 0xff;
-  const r = Math.round(ar + (br - ar) * t);
-  const g = Math.round(ag + (bg - ag) * t);
-  const bl = Math.round(ab + (bb - ab) * t);
-  return (r << 16) | (g << 8) | bl;
 }

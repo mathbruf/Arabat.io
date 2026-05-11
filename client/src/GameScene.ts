@@ -10,12 +10,13 @@ import {
   TickPayload,
 } from './types';
 import { InputController } from './input/InputController';
-import { LocalPlayer, PLAYER_RADIUS } from './entities/LocalPlayer';
+import { LocalPlayer } from './entities/LocalPlayer';
 import { RemotePlayer } from './entities/RemotePlayer';
 import { Bullet, ensureBulletTexture } from './entities/Bullet';
 import { Obstacle } from './entities/Obstacle';
 import { NetworkClient } from './net/NetworkClient';
 import { Menu } from './ui/Menu';
+import { MinimapHUD } from './ui/MinimapHUD';
 import { WORLD_WIDTH, WORLD_HEIGHT } from './constants';
 
 const POSITION_SEND_HZ = 20;
@@ -26,6 +27,7 @@ export class GameScene extends Phaser.Scene {
   private inputCtl!: InputController;
   private network!: NetworkClient;
   private menu!: Menu;
+  private minimap!: MinimapHUD;
 
   private localPlayer?: LocalPlayer;
   private selfId?: string;
@@ -46,19 +48,25 @@ export class GameScene extends Phaser.Scene {
   }
 
   preload() {
-    const gfx = this.make.graphics({ x: 0, y: 0 });
-    gfx.fillStyle(0xffffff, 1);
-    gfx.fillCircle(PLAYER_RADIUS, PLAYER_RADIUS, PLAYER_RADIUS);
-    gfx.generateTexture('circle', PLAYER_RADIUS * 2, PLAYER_RADIUS * 2);
-    gfx.destroy();
+    this.load.atlasXML(
+      'characters',
+      'assets/kenney_top-down-shooter/Spritesheet/spritesheet_characters.png',
+      'assets/kenney_top-down-shooter/Spritesheet/spritesheet_characters.xml',
+    );
+    this.load.image('floor_tile', 'assets/kenney_top-down-shooter/PNG/Tiles/tile_01.png');
     ensureBulletTexture(this);
   }
 
   create() {
-    this.drawArenaBackground();
+    this.setupBackground();
+
+    this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
     this.inputCtl = new InputController(this);
 
     this.menu = new Menu((name) => this.handleMenuSubmit(name));
+    this.minimap = new MinimapHUD(this, WORLD_WIDTH, WORLD_HEIGHT);
+    this.minimap.setVisible(false);
 
     const serverUrl =
       import.meta.env.VITE_SERVER_URL ??
@@ -90,9 +98,21 @@ export class GameScene extends Phaser.Scene {
     const dt = deltaMs / 1000;
 
     if (this.localPlayer) {
-      this.localPlayer.update(dt);
+      const shootDir = this.inputCtl.getShootDirection();
+      this.localPlayer.update(dt, shootDir);
       this.maybeSendPosition(deltaMs);
       this.maybeShoot();
+
+      const cam = this.cameras.main;
+      this.minimap.update(
+        this.localPlayer.position.x,
+        this.localPlayer.position.y,
+        this.remotePlayers,
+        cam.scrollX,
+        cam.scrollY,
+        cam.width,
+        cam.height,
+      );
     }
 
     for (const remote of this.remotePlayers.values()) {
@@ -134,6 +154,9 @@ export class GameScene extends Phaser.Scene {
     );
     this.lastSentX = payload.self.x;
     this.lastSentY = payload.self.y;
+
+    this.cameras.main.startFollow(this.localPlayer.getSprite(), true, 0.12, 0.12);
+    this.minimap.setVisible(true);
 
     this.kills.clear();
     for (const player of Object.values(payload.players)) {
@@ -220,6 +243,8 @@ export class GameScene extends Phaser.Scene {
 
     if (payload.playerId === this.selfId) {
       const killerName = this.lookupName(payload.killerId);
+      this.cameras.main.stopFollow();
+      this.minimap.setVisible(false);
       this.localPlayer?.destroy();
       this.localPlayer = undefined;
       this.menu.show('death', { killerName });
@@ -244,6 +269,8 @@ export class GameScene extends Phaser.Scene {
       );
       this.lastSentX = player.x;
       this.lastSentY = player.y;
+      this.cameras.main.startFollow(this.localPlayer.getSprite(), true, 0.12, 0.12);
+      this.minimap.setVisible(true);
       this.menu.hide();
       this.menu.resetBusy();
     } else {
@@ -275,7 +302,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private refreshPlayerCount(): void {
-    // +1 for the local player when alive (not in remote map).
     const localAlive = this.localPlayer ? 1 : 0;
     this.menu.setPlayerCount(this.remotePlayers.size + localAlive);
   }
@@ -286,18 +312,20 @@ export class GameScene extends Phaser.Scene {
       name: v.name,
       kills: v.kills,
     }));
-    entries.sort((a, b) =>
-      b.kills - a.kills || a.name.localeCompare(b.name),
-    );
+    entries.sort((a, b) => b.kills - a.kills || a.name.localeCompare(b.name));
     this.menu.setLeaderboard(entries, this.selfId);
   }
 
-  private spawnObstacles(obstacleData: { id: string; x: number; y: number; w: number; h: number }[]): void {
+  private spawnObstacles(
+    obstacleData: { id: string; x: number; y: number; w: number; h: number }[],
+  ): void {
     for (const o of this.obstacles) o.destroy();
     this.obstacles = obstacleData.map((d) => new Obstacle(this, d));
   }
 
   private leaveToMenu(): void {
+    this.cameras.main.stopFollow();
+    this.minimap.setVisible(false);
     this.network.leaveGame();
     this.localPlayer?.destroy();
     this.localPlayer = undefined;
@@ -338,30 +366,14 @@ export class GameScene extends Phaser.Scene {
     this.network.shoot(dir.x, dir.y);
   }
 
-  private drawArenaBackground(): void {
+  private setupBackground(): void {
+    this.add
+      .tileSprite(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, WORLD_WIDTH, WORLD_HEIGHT, 'floor_tile')
+      .setDepth(-10);
+
     const g = this.add.graphics();
-    g.setDepth(-10);
-
-    g.fillStyle(0x0b1023, 1);
-    g.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-
-    // Soft vignette via concentric stroked rects.
-    g.lineStyle(1, 0x18213e, 0.5);
-    const step = 60;
-    for (let x = step; x < WORLD_WIDTH; x += step) {
-      g.beginPath();
-      g.moveTo(x, 0);
-      g.lineTo(x, WORLD_HEIGHT);
-      g.strokePath();
-    }
-    for (let y = step; y < WORLD_HEIGHT; y += step) {
-      g.beginPath();
-      g.moveTo(0, y);
-      g.lineTo(WORLD_WIDTH, y);
-      g.strokePath();
-    }
-
-    g.lineStyle(3, 0x2a3b66, 0.7);
+    g.setDepth(-9);
+    g.lineStyle(4, 0x2a3b66, 0.8);
     g.strokeRect(2, 2, WORLD_WIDTH - 4, WORLD_HEIGHT - 4);
   }
 }

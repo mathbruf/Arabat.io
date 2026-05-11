@@ -17,8 +17,8 @@ const io = new Server(httpServer, {
   },
 });
 
-const WORLD_W = 1280;
-const WORLD_H = 720;
+const WORLD_W = 3200;
+const WORLD_H = 1800;
 const PLAYER_RADIUS = 16;
 const MAX_HP = 100;
 const BULLET_RADIUS = 4;
@@ -61,16 +61,62 @@ interface Obstacle {
   h: number;
 }
 
-const OBSTACLES: Obstacle[] = [
-  { id: 'o1', x: 180, y: 160, w: 120, h: 60 },
-  { id: 'o2', x: 980, y: 160, w: 120, h: 60 },
-  { id: 'o3', x: 180, y: 500, w: 120, h: 60 },
-  { id: 'o4', x: 980, y: 500, w: 120, h: 60 },
-  { id: 'o5', x: 560, y: 80, w: 160, h: 50 },
-  { id: 'o6', x: 560, y: 590, w: 160, h: 50 },
-  { id: 'o7', x: 460, y: 320, w: 80, h: 80 },
-  { id: 'o8', x: 740, y: 320, w: 80, h: 80 },
-];
+// Deterministic PRNG (mulberry32) so the layout is stable across restarts.
+function makePrng(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function generateObstacles(): Obstacle[] {
+  const rng = makePrng(0xdeadbeef);
+  const obs: Obstacle[] = [];
+  let n = 0;
+
+  // Divide world into cells; place 0–2 obstacles per cell at random positions.
+  const COLS = 8;
+  const ROWS = 5;
+  const cellW = WORLD_W / COLS; // 400
+  const cellH = WORLD_H / ROWS; // 360
+  const MARGIN = 40; // keep obstacles away from cell edges
+
+  // Shape templates: [minW, maxW, minH, maxH]
+  const shapes: [number, number, number, number][] = [
+    [60, 90, 60, 90],    // square block
+    [120, 200, 35, 55],  // horizontal bar
+    [35, 55, 100, 160],  // vertical bar
+    [90, 130, 90, 130],  // large block
+  ];
+
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      // ~25% of cells are left open.
+      if (rng() < 0.25) continue;
+
+      const count = rng() < 0.4 ? 2 : 1;
+      for (let k = 0; k < count; k++) {
+        const [minW, maxW, minH, maxH] = shapes[Math.floor(rng() * shapes.length)];
+        const w = Math.round(minW + rng() * (maxW - minW));
+        const h = Math.round(minH + rng() * (maxH - minH));
+        const maxX = col * cellW + cellW - MARGIN - w;
+        const minX = col * cellW + MARGIN;
+        const maxY = row * cellH + cellH - MARGIN - h;
+        const minY = row * cellH + MARGIN;
+        if (maxX <= minX || maxY <= minY) continue;
+        const x = Math.round(minX + rng() * (maxX - minX));
+        const y = Math.round(minY + rng() * (maxY - minY));
+        obs.push({ id: `o${++n}`, x, y, w, h });
+      }
+    }
+  }
+  return obs;
+}
+
+const OBSTACLES: Obstacle[] = generateObstacles();
 
 const players: Record<string, Player> = {};
 const bullets: Record<string, Bullet> = {};
@@ -227,18 +273,18 @@ io.on('connection', (socket: Socket) => {
     if (typeof dx !== 'number' || typeof dy !== 'number') return;
     const sdx = Math.sign(Math.trunc(dx));
     const sdy = Math.sign(Math.trunc(dy));
-    // Require strictly one cardinal axis; reject diagonals and zeros.
-    if ((sdx === 0) === (sdy === 0)) return;
+    if (sdx === 0 && sdy === 0) return;
+    const len = Math.hypot(sdx, sdy);
     const now = Date.now();
     if (now - (lastShotAt[socket.id] ?? 0) < SHOOT_COOLDOWN_MS) return;
     lastShotAt[socket.id] = now;
     const bullet: Bullet = {
       id: `b${++bulletSeq}`,
       ownerId: socket.id,
-      x: player.x + sdx * (PLAYER_RADIUS + BULLET_RADIUS + 2),
-      y: player.y + sdy * (PLAYER_RADIUS + BULLET_RADIUS + 2),
-      vx: sdx * BULLET_SPEED,
-      vy: sdy * BULLET_SPEED,
+      x: player.x + (sdx / len) * (PLAYER_RADIUS + BULLET_RADIUS + 2),
+      y: player.y + (sdy / len) * (PLAYER_RADIUS + BULLET_RADIUS + 2),
+      vx: (sdx / len) * BULLET_SPEED,
+      vy: (sdy / len) * BULLET_SPEED,
       color: player.color,
       spawnedAt: now,
     };
