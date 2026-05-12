@@ -104,6 +104,17 @@ export class PlayerAvatar {
     this.label.setText(name);
   }
 
+  dashFlash(): void {
+    this.sprite.setScale(SPRITE_SCALE * 1.35);
+    this.scene.tweens.add({
+      targets: this.sprite,
+      scaleX: SPRITE_SCALE,
+      scaleY: SPRITE_SCALE,
+      duration: 180,
+      ease: 'Power2',
+    });
+  }
+
   flash(): void {
     this.flashTween?.stop();
     this.sprite.setTint(0xffffff);

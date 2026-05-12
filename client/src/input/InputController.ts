@@ -15,6 +15,7 @@ export class InputController {
     left: Phaser.Input.Keyboard.Key;
     right: Phaser.Input.Keyboard.Key;
   };
+  private spaceKey: Phaser.Input.Keyboard.Key;
 
   constructor(scene: Phaser.Scene) {
     const kb = scene.input.keyboard!;
@@ -33,6 +34,7 @@ export class InputController {
       left: addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
       right: addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
     };
+    this.spaceKey = addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
   }
 
   getMoveDirection(): { x: number; y: number } {
@@ -48,6 +50,10 @@ export class InputController {
       y /= len;
     }
     return { x, y };
+  }
+
+  isDashPressed(): boolean {
+    return Phaser.Input.Keyboard.JustDown(this.spaceKey);
   }
 
   getShootDirection(): ShootDir | null {

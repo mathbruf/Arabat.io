@@ -20,13 +20,15 @@ const WORLD_H = 1800;
 const PLAYER_RADIUS = 16;
 const MAX_HP = 100;
 const BULLET_RADIUS = 4;
-const BULLET_SPEED = 600;
+const BULLET_SPEED = 1000;
 const BULLET_LIFETIME_MS = 1500;
 const BULLET_DAMAGE = 20;
-const SHOOT_COOLDOWN_MS = 500;
+const SHOOT_COOLDOWN_MS = 350;
 const TICK_HZ = 30;
 const TICK_MS = 1000 / TICK_HZ;
 const NAME_MAX_LEN = 16;
+const REGEN_DELAY_MS = 5000;
+const REGEN_RATE_PER_SEC = 5;
 
 interface Player {
   id: string;
@@ -122,6 +124,7 @@ const bullets = new Map<string, Bullet>();
 const pendingMoves = new Map<string, { x: number; y: number }>();
 const lastShotAt = new Map<string, number>();
 const lastMovementAt = new Map<string, number>();
+const lastHitAt = new Map<string, number>();
 let bulletSeq = 0;
 
 function randomBetween(min: number, max: number): number {
@@ -327,6 +330,7 @@ io.on('connection', (socket: Socket) => {
     players.delete(socket.id);
     lastShotAt.delete(socket.id);
     lastMovementAt.delete(socket.id);
+    lastHitAt.delete(socket.id);
     pendingMoves.delete(socket.id);
     io.emit('userDisconnected', socket.id);
     console.log(`Player left: ${socket.id}`);
@@ -340,6 +344,7 @@ io.on('connection', (socket: Socket) => {
     }
     lastShotAt.delete(socket.id);
     lastMovementAt.delete(socket.id);
+    lastHitAt.delete(socket.id);
     pendingMoves.delete(socket.id);
   });
 });
@@ -393,6 +398,7 @@ setInterval(() => {
         const owner = players.get(b.ownerId);
         const dmg = Math.round(BULLET_DAMAGE * (owner?.damageMultiplier ?? 1));
         p.hp = Math.max(0, p.hp - dmg);
+        lastHitAt.set(p.id, now);
         hits.push({ playerId: p.id, hp: p.hp, attackerId: b.ownerId, bulletId: b.id });
         bullets.delete(id);
         removed.push(id);
@@ -406,8 +412,19 @@ setInterval(() => {
     }
   }
 
-  if (moved.length || removed.length || hits.length || deaths.length) {
-    io.emit('tick', { moved, removed, hits, deaths });
+  const healed: { playerId: string; hp: number }[] = [];
+  for (const p of players.values()) {
+    if (!p.alive || p.hp >= p.maxHp) continue;
+    if (now - (lastHitAt.get(p.id) ?? 0) < REGEN_DELAY_MS) continue;
+    const prevHp = p.hp;
+    p.hp = Math.min(p.maxHp, p.hp + REGEN_RATE_PER_SEC * dt);
+    if (Math.round(p.hp) !== Math.round(prevHp)) {
+      healed.push({ playerId: p.id, hp: Math.round(p.hp) });
+    }
+  }
+
+  if (moved.length || removed.length || hits.length || deaths.length || healed.length) {
+    io.emit('tick', { moved, removed, hits, deaths, healed });
   }
 }, TICK_MS);
 

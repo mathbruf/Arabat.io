@@ -107,6 +107,7 @@ export class GameScene extends Phaser.Scene {
     const dt = deltaMs / 1000;
 
     if (this.localPlayer) {
+      if (this.inputCtl.isDashPressed()) this.localPlayer.tryDash();
       const shootDir = this.inputCtl.getShootDirection();
       this.localPlayer.update(dt, shootDir);
       this.maybeSendPosition(deltaMs);
@@ -203,6 +204,13 @@ export class GameScene extends Phaser.Scene {
     for (const id of payload.removed) this.handleBulletRemoved({ id });
     for (const hit of payload.hits) this.handlePlayerHit(hit);
     for (const death of payload.deaths) this.handlePlayerDied(death);
+    for (const heal of payload.healed ?? []) {
+      if (heal.playerId === this.selfId) {
+        this.localPlayer?.setHp(heal.hp);
+      } else {
+        this.remotePlayers.get(heal.playerId)?.setHp(heal.hp);
+      }
+    }
   }
 
   private handlePlayerMoved(player: { id: string; x: number; y: number }): void {
