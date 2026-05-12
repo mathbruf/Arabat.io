@@ -4,6 +4,12 @@ services:
     runtime: node
     buildCommand: "npm --prefix server install && npm --prefix server run build"
     startCommand: "node server/dist/index.js"
+    healthCheckPath: /
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - server/**
+        - render.yaml
     envVars:
       - key: NODE_ENV
         value: production
@@ -13,12 +19,21 @@ services:
     runtime: static
     buildCommand: "npm --prefix client install && npm --prefix client run build"
     staticPublishPath: ./client/dist
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - client/**
+        - render.yaml
     envVars:
       - key: VITE_SERVER_URL
         fromService:
           type: web
           name: arabat-server
           property: host
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
     routes:
       - type: rewrite
         source: /*
