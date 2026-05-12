@@ -117,11 +117,11 @@ function generateObstacles(): Obstacle[] {
 
 const OBSTACLES: Obstacle[] = generateObstacles();
 
-const players: Record<string, Player> = {};
-const bullets: Record<string, Bullet> = {};
-const pendingMoves: Record<string, { x: number; y: number }> = {};
-const lastShotAt: Record<string, number> = {};
-const lastMovementAt: Record<string, number> = {};
+const players = new Map<string, Player>();
+const bullets = new Map<string, Bullet>();
+const pendingMoves = new Map<string, { x: number; y: number }>();
+const lastShotAt = new Map<string, number>();
+const lastMovementAt = new Map<string, number>();
 let bulletSeq = 0;
 
 function randomBetween(min: number, max: number): number {
@@ -210,7 +210,7 @@ io.on('connection', (socket: Socket) => {
   console.log(`Socket connected: ${socket.id}`);
 
   socket.on('join', (data: unknown) => {
-    if (players[socket.id]) return;
+    if (players.has(socket.id)) return;
     const name = sanitizeName((data as { name?: unknown })?.name);
     if (!name) {
       socket.emit('joinRejected', { reason: 'invalid_name' });
@@ -229,11 +229,11 @@ io.on('connection', (socket: Socket) => {
       kills: 0,
       damageMultiplier: 1,
     };
-    players[socket.id] = player;
+    players.set(socket.id, player);
     socket.emit('joined', {
       self: player,
-      players,
-      bullets: Object.values(bullets),
+      players: Object.fromEntries(players),
+      bullets: [...bullets.values()],
       obstacles: OBSTACLES,
       world: { width: WORLD_W, height: WORLD_H },
     });
@@ -242,12 +242,12 @@ io.on('connection', (socket: Socket) => {
   });
 
   socket.on('playerMovement', (data: { x: number; y: number }) => {
-    const player = players[socket.id];
+    const player = players.get(socket.id);
     if (!player || !player.alive) return;
     if (typeof data?.x !== 'number' || typeof data?.y !== 'number') return;
     const now = Date.now();
-    if (now - (lastMovementAt[socket.id] ?? 0) < TICK_MS) return;
-    lastMovementAt[socket.id] = now;
+    if (now - (lastMovementAt.get(socket.id) ?? 0) < TICK_MS) return;
+    lastMovementAt.set(socket.id, now);
     const clamped = clampToWorld(data.x, data.y);
     let nx = clamped.x;
     let ny = clamped.y;
@@ -263,11 +263,11 @@ io.on('connection', (socket: Socket) => {
     if (nx === player.x && ny === player.y) return;
     player.x = nx;
     player.y = ny;
-    pendingMoves[socket.id] = { x: nx, y: ny };
+    pendingMoves.set(socket.id, { x: nx, y: ny });
   });
 
   socket.on('shoot', (data: unknown) => {
-    const player = players[socket.id];
+    const player = players.get(socket.id);
     if (!player || !player.alive) return;
     const { dx, dy } = (data as { dx?: number; dy?: number }) ?? {};
     if (typeof dx !== 'number' || typeof dy !== 'number') return;
@@ -276,8 +276,8 @@ io.on('connection', (socket: Socket) => {
     if (sdx === 0 && sdy === 0) return;
     const len = Math.hypot(sdx, sdy);
     const now = Date.now();
-    if (now - (lastShotAt[socket.id] ?? 0) < SHOOT_COOLDOWN_MS) return;
-    lastShotAt[socket.id] = now;
+    if (now - (lastShotAt.get(socket.id) ?? 0) < SHOOT_COOLDOWN_MS) return;
+    lastShotAt.set(socket.id, now);
     const bullet: Bullet = {
       id: `b${++bulletSeq}`,
       ownerId: socket.id,
@@ -288,12 +288,12 @@ io.on('connection', (socket: Socket) => {
       color: player.color,
       spawnedAt: now,
     };
-    bullets[bullet.id] = bullet;
+    bullets.set(bullet.id, bullet);
     io.emit('bulletSpawned', bullet);
   });
 
   socket.on('respawn', (data: unknown) => {
-    const player = players[socket.id];
+    const player = players.get(socket.id);
     if (!player || player.alive) return;
     const requestedName = sanitizeName((data as { name?: unknown })?.name);
     if (requestedName) player.name = requestedName;
@@ -309,7 +309,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   socket.on('upgrade', (data: unknown) => {
-    const player = players[socket.id];
+    const player = players.get(socket.id);
     if (!player || !player.alive) return;
     const type = (data as { type?: string })?.type;
     if (type === 'health') {
@@ -323,24 +323,24 @@ io.on('connection', (socket: Socket) => {
   });
 
   socket.on('leaveGame', () => {
-    if (!players[socket.id]) return;
-    delete players[socket.id];
-    delete lastShotAt[socket.id];
-    delete lastMovementAt[socket.id];
-    delete pendingMoves[socket.id];
+    if (!players.has(socket.id)) return;
+    players.delete(socket.id);
+    lastShotAt.delete(socket.id);
+    lastMovementAt.delete(socket.id);
+    pendingMoves.delete(socket.id);
     io.emit('userDisconnected', socket.id);
     console.log(`Player left: ${socket.id}`);
   });
 
   socket.on('disconnect', () => {
     console.log(`Socket disconnected: ${socket.id}`);
-    if (players[socket.id]) {
-      delete players[socket.id];
+    if (players.has(socket.id)) {
+      players.delete(socket.id);
       io.emit('userDisconnected', socket.id);
     }
-    delete lastShotAt[socket.id];
-    delete lastMovementAt[socket.id];
-    delete pendingMoves[socket.id];
+    lastShotAt.delete(socket.id);
+    lastMovementAt.delete(socket.id);
+    pendingMoves.delete(socket.id);
   });
 });
 
@@ -355,13 +355,12 @@ setInterval(() => {
   const hits: { playerId: string; hp: number; attackerId: string; bulletId: string }[] = [];
   const deaths: { playerId: string; killerId: string }[] = [];
 
-  for (const id in pendingMoves) {
-    moved.push({ id, x: pendingMoves[id].x, y: pendingMoves[id].y });
-    delete pendingMoves[id];
+  for (const [id, pos] of pendingMoves) {
+    moved.push({ id, x: pos.x, y: pos.y });
   }
+  pendingMoves.clear();
 
-  for (const id in bullets) {
-    const b = bullets[id];
+  for (const [id, b] of bullets) {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
 
@@ -369,7 +368,7 @@ setInterval(() => {
       now - b.spawnedAt > BULLET_LIFETIME_MS ||
       b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H
     ) {
-      delete bullets[id];
+      bullets.delete(id);
       removed.push(id);
       continue;
     }
@@ -379,29 +378,27 @@ setInterval(() => {
       if (pointInRect(b.x, b.y, o)) { hitObstacle = true; break; }
     }
     if (hitObstacle) {
-      delete bullets[id];
+      bullets.delete(id);
       removed.push(id);
       continue;
     }
 
-    for (const pid in players) {
-      if (pid === b.ownerId) continue;
-      const p = players[pid];
+    for (const p of players.values()) {
+      if (p.id === b.ownerId) continue;
       if (!p.alive) continue;
       const dx = p.x - b.x;
       const dy = p.y - b.y;
       const r = PLAYER_RADIUS + BULLET_RADIUS;
       if (dx * dx + dy * dy <= r * r) {
-        const owner = players[b.ownerId];
+        const owner = players.get(b.ownerId);
         const dmg = Math.round(BULLET_DAMAGE * (owner?.damageMultiplier ?? 1));
         p.hp = Math.max(0, p.hp - dmg);
         hits.push({ playerId: p.id, hp: p.hp, attackerId: b.ownerId, bulletId: b.id });
-        delete bullets[id];
+        bullets.delete(id);
         removed.push(id);
         if (p.hp <= 0) {
           p.alive = false;
-          const killer = players[b.ownerId];
-          if (killer) killer.kills += 1;
+          if (owner) owner.kills += 1;
           deaths.push({ playerId: p.id, killerId: b.ownerId });
         }
         break;
