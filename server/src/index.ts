@@ -124,14 +124,6 @@ const lastShotAt: Record<string, number> = {};
 const lastMovementAt: Record<string, number> = {};
 let bulletSeq = 0;
 
-let pendingSpawnedBullets: Bullet[] = [];
-let pendingRemovedBullets: string[] = [];
-let pendingHits: HitEvent[] = [];
-let pendingDeaths: DeathEvent[] = [];
-let pendingJoined: Player[] = [];
-let pendingLeft: string[] = [];
-let pendingRespawned: Player[] = [];
-
 function randomBetween(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -245,7 +237,7 @@ io.on('connection', (socket: Socket) => {
       obstacles: OBSTACLES,
       world: { width: WORLD_W, height: WORLD_H },
     });
-    pendingJoined.push(player);
+    socket.broadcast.emit('newPlayer', player);
     console.log(`Player joined: ${name} (${socket.id})`);
   });
 
@@ -297,7 +289,7 @@ io.on('connection', (socket: Socket) => {
       spawnedAt: now,
     };
     bullets[bullet.id] = bullet;
-    pendingSpawnedBullets.push(bullet);
+    io.emit('bulletSpawned', bullet);
   });
 
   socket.on('respawn', (data: unknown) => {
@@ -312,8 +304,7 @@ io.on('connection', (socket: Socket) => {
     player.maxHp = MAX_HP;
     player.damageMultiplier = 1;
     player.alive = true;
-    player.dirty = true;
-    pendingRespawned.push(player);
+    io.emit('playerRespawned', player);
     console.log(`Player respawned: ${player.name} (${socket.id})`);
   });
 
@@ -345,7 +336,7 @@ io.on('connection', (socket: Socket) => {
     console.log(`Socket disconnected: ${socket.id}`);
     if (players[socket.id]) {
       delete players[socket.id];
-      pendingLeft.push(socket.id);
+      io.emit('userDisconnected', socket.id);
     }
     delete lastShotAt[socket.id];
     delete lastMovementAt[socket.id];
