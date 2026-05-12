@@ -1,25 +1,23 @@
 import { io, Socket } from 'socket.io-client';
 import type {
   BulletData,
-  BulletRemovedPayload,
   JoinRejectedPayload,
   JoinedPayload,
   PlayerData,
-  PlayerDiedPayload,
-  PlayerHitPayload,
+  PlayerStatsPayload,
+  TickPayload,
+  UpgradeType,
 } from '../types';
 
 export interface NetworkHandlers {
   onJoined: (payload: JoinedPayload) => void;
   onJoinRejected: (payload: JoinRejectedPayload) => void;
   onNewPlayer: (player: PlayerData) => void;
-  onPlayerMoved: (player: PlayerData) => void;
+  onTick: (payload: TickPayload) => void;
   onUserDisconnected: (id: string) => void;
   onBulletSpawned: (bullet: BulletData) => void;
-  onBulletRemoved: (payload: BulletRemovedPayload) => void;
-  onPlayerHit: (payload: PlayerHitPayload) => void;
-  onPlayerDied: (payload: PlayerDiedPayload) => void;
   onPlayerRespawned: (player: PlayerData) => void;
+  onPlayerStatsUpdated: (payload: PlayerStatsPayload) => void;
   onConnect: () => void;
   onDisconnect: () => void;
 }
@@ -34,13 +32,11 @@ export class NetworkClient {
     this.socket.on('joined', handlers.onJoined);
     this.socket.on('joinRejected', handlers.onJoinRejected);
     this.socket.on('newPlayer', handlers.onNewPlayer);
-    this.socket.on('playerMoved', handlers.onPlayerMoved);
+    this.socket.on('tick', handlers.onTick);
     this.socket.on('userDisconnected', handlers.onUserDisconnected);
     this.socket.on('bulletSpawned', handlers.onBulletSpawned);
-    this.socket.on('bulletRemoved', handlers.onBulletRemoved);
-    this.socket.on('playerHit', handlers.onPlayerHit);
-    this.socket.on('playerDied', handlers.onPlayerDied);
     this.socket.on('playerRespawned', handlers.onPlayerRespawned);
+    this.socket.on('playerStatsUpdated', handlers.onPlayerStatsUpdated);
   }
 
   get id(): string | undefined {
@@ -69,5 +65,9 @@ export class NetworkClient {
 
   leaveGame(): void {
     this.socket.emit('leaveGame');
+  }
+
+  sendUpgrade(type: UpgradeType): void {
+    this.socket.emit('upgrade', { type });
   }
 }

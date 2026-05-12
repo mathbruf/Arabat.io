@@ -56,3 +56,18 @@ export interface BulletRemovedPayload {
 export interface JoinRejectedPayload {
   reason: string;
 }
+
+export interface TickPayload {
+  moved: { id: string; x: number; y: number }[];
+  removed: string[];
+  hits: PlayerHitPayload[];
+  deaths: PlayerDiedPayload[];
+}
+
+export type UpgradeType = 'health' | 'damage' | 'speed';
+
+export interface PlayerStatsPayload {
+  playerId: string;
+  hp: number;
+  maxHp: number;
+}
