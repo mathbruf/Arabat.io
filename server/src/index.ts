@@ -2,8 +2,6 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import cors from 'cors';
-import path from 'path';
-import { existsSync } from 'fs';
 
 const app = express();
 app.use(cors());
@@ -126,6 +124,14 @@ const lastShotAt: Record<string, number> = {};
 const lastMovementAt: Record<string, number> = {};
 let bulletSeq = 0;
 
+let pendingSpawnedBullets: Bullet[] = [];
+let pendingRemovedBullets: string[] = [];
+let pendingHits: HitEvent[] = [];
+let pendingDeaths: DeathEvent[] = [];
+let pendingJoined: Player[] = [];
+let pendingLeft: string[] = [];
+let pendingRespawned: Player[] = [];
+
 function randomBetween(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -156,7 +162,6 @@ function randomSpawn(): { x: number; y: number } {
     const y = randomBetween(pad, WORLD_H - pad);
     if (positionFreeForPlayer(x, y)) return { x, y };
   }
-  // Fallback: world center (kept free by obstacle layout).
   return { x: WORLD_W / 2, y: WORLD_H / 2 };
 }
 
@@ -240,7 +245,7 @@ io.on('connection', (socket: Socket) => {
       obstacles: OBSTACLES,
       world: { width: WORLD_W, height: WORLD_H },
     });
-    socket.broadcast.emit('newPlayer', player);
+    pendingJoined.push(player);
     console.log(`Player joined: ${name} (${socket.id})`);
   });
 
@@ -263,6 +268,7 @@ io.on('connection', (socket: Socket) => {
         return;
       }
     }
+    if (nx === player.x && ny === player.y) return;
     player.x = nx;
     player.y = ny;
     pendingMoves[socket.id] = { x: nx, y: ny };
@@ -291,7 +297,7 @@ io.on('connection', (socket: Socket) => {
       spawnedAt: now,
     };
     bullets[bullet.id] = bullet;
-    io.emit('bulletSpawned', bullet);
+    pendingSpawnedBullets.push(bullet);
   });
 
   socket.on('respawn', (data: unknown) => {
@@ -306,7 +312,8 @@ io.on('connection', (socket: Socket) => {
     player.maxHp = MAX_HP;
     player.damageMultiplier = 1;
     player.alive = true;
-    io.emit('playerRespawned', player);
+    player.dirty = true;
+    pendingRespawned.push(player);
     console.log(`Player respawned: ${player.name} (${socket.id})`);
   });
 
@@ -338,7 +345,7 @@ io.on('connection', (socket: Socket) => {
     console.log(`Socket disconnected: ${socket.id}`);
     if (players[socket.id]) {
       delete players[socket.id];
-      io.emit('userDisconnected', socket.id);
+      pendingLeft.push(socket.id);
     }
     delete lastShotAt[socket.id];
     delete lastMovementAt[socket.id];
@@ -416,17 +423,9 @@ setInterval(() => {
   }
 }, TICK_MS);
 
-const clientDist = path.resolve(__dirname, '../../client/dist');
-if (existsSync(clientDist)) {
-  app.use(express.static(clientDist));
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(clientDist, 'index.html'));
-  });
-} else {
-  app.get('/', (_req, res) => {
-    res.send('arabat-io server is running (no client build present)');
-  });
-}
+app.get('/', (_req, res) => {
+  res.json({ ok: true, service: 'arabat-server' });
+});
 
 const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {

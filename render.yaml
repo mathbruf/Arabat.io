@@ -2,8 +2,24 @@ services:
   - type: web
     name: arabat-server
     runtime: node
-    buildCommand: "npm --prefix client install && npm --prefix client run build && npm --prefix server install && npm --prefix server run build"
+    buildCommand: "npm --prefix server install && npm --prefix server run build"
     startCommand: "node server/dist/index.js"
     envVars:
       - key: NODE_ENV
         value: production
+
+  - type: web
+    name: arabat-client
+    runtime: static
+    buildCommand: "npm --prefix client install && npm --prefix client run build"
+    staticPublishPath: ./client/dist
+    envVars:
+      - key: VITE_SERVER_URL
+        fromService:
+          type: web
+          name: arabat-server
+          property: host
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

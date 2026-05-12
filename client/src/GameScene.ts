@@ -26,6 +26,13 @@ const POSITION_SEND_HZ = 20;
 const SEND_INTERVAL_MS = 1000 / POSITION_SEND_HZ;
 const SHOOT_COOLDOWN_MS = 500;
 
+function resolveServerUrl(): string {
+  const raw = (import.meta.env.VITE_SERVER_URL as string | undefined) ?? '';
+  if (raw) return /^https?:\/\//.test(raw) ? raw : `https://${raw}`;
+  if (import.meta.env.DEV) return 'http://localhost:3000';
+  return '';
+}
+
 export class GameScene extends Phaser.Scene {
   private inputCtl!: InputController;
   private network!: NetworkClient;
@@ -73,11 +80,7 @@ export class GameScene extends Phaser.Scene {
     this.minimap.setVisible(false);
     this.xpHUD = new XpHUD((type) => this.handleUpgrade(type));
 
-    const serverUrl =
-      import.meta.env.VITE_SERVER_URL ??
-      (import.meta.env.DEV ? 'http://localhost:3000' : '');
-
-    this.network = new NetworkClient(serverUrl, {
+    this.network = new NetworkClient(resolveServerUrl(), {
       onConnect: () => this.menu.setConnected(true),
       onDisconnect: () => {
         this.menu.setConnected(false);
