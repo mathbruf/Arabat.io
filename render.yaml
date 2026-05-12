@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: arabat-server
+    name: arabat-io
     runtime: node
     buildCommand: "npm --prefix server install && npm --prefix server run build"
     startCommand: "node server/dist/index.js"
@@ -28,7 +28,7 @@ services:
       - key: VITE_SERVER_URL
         fromService:
           type: web
-          name: arabat-server
+          name: arabat-io
           property: host
     headers:
       - path: /assets/*
