@@ -15,8 +15,8 @@ const io = new Server(httpServer, {
   },
 });
 
-const WORLD_W = 1280;
-const WORLD_H = 720;
+const WORLD_W = 3200;
+const WORLD_H = 1800;
 const PLAYER_RADIUS = 16;
 const MAX_HP = 100;
 const BULLET_RADIUS = 4;
@@ -38,7 +38,7 @@ interface Player {
   maxHp: number;
   alive: boolean;
   kills: number;
-  dirty: boolean;
+  damageMultiplier: number;
 }
 
 interface Bullet {
@@ -60,51 +60,68 @@ interface Obstacle {
   h: number;
 }
 
-interface PlayerPositionUpdate {
-  id: string;
-  x: number;
-  y: number;
-  hp: number;
+// Deterministic PRNG (mulberry32) so the layout is stable across restarts.
+function makePrng(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-interface HitEvent {
-  playerId: string;
-  hp: number;
-  attackerId: string;
-  bulletId: string;
+function generateObstacles(): Obstacle[] {
+  const rng = makePrng(0xdeadbeef);
+  const obs: Obstacle[] = [];
+  let n = 0;
+
+  // Divide world into cells; place 0–2 obstacles per cell at random positions.
+  const COLS = 8;
+  const ROWS = 5;
+  const cellW = WORLD_W / COLS; // 400
+  const cellH = WORLD_H / ROWS; // 360
+  const MARGIN = 40; // keep obstacles away from cell edges
+
+  // Shape templates: [minW, maxW, minH, maxH]
+  const shapes: [number, number, number, number][] = [
+    [60, 90, 60, 90],    // square block
+    [120, 200, 35, 55],  // horizontal bar
+    [35, 55, 100, 160],  // vertical bar
+    [90, 130, 90, 130],  // large block
+  ];
+
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      // ~25% of cells are left open.
+      if (rng() < 0.25) continue;
+
+      const count = rng() < 0.4 ? 2 : 1;
+      for (let k = 0; k < count; k++) {
+        const [minW, maxW, minH, maxH] = shapes[Math.floor(rng() * shapes.length)];
+        const w = Math.round(minW + rng() * (maxW - minW));
+        const h = Math.round(minH + rng() * (maxH - minH));
+        const maxX = col * cellW + cellW - MARGIN - w;
+        const minX = col * cellW + MARGIN;
+        const maxY = row * cellH + cellH - MARGIN - h;
+        const minY = row * cellH + MARGIN;
+        if (maxX <= minX || maxY <= minY) continue;
+        const x = Math.round(minX + rng() * (maxX - minX));
+        const y = Math.round(minY + rng() * (maxY - minY));
+        obs.push({ id: `o${++n}`, x, y, w, h });
+      }
+    }
+  }
+  return obs;
 }
 
-interface DeathEvent {
-  playerId: string;
-  killerId: string;
-}
-
-interface StateUpdate {
-  t: number;
-  players: PlayerPositionUpdate[];
-  spawnedBullets: Bullet[];
-  removedBullets: string[];
-  hits: HitEvent[];
-  deaths: DeathEvent[];
-  joined: Player[];
-  left: string[];
-  respawned: Player[];
-}
-
-const OBSTACLES: Obstacle[] = [
-  { id: 'o1', x: 180, y: 160, w: 120, h: 60 },
-  { id: 'o2', x: 980, y: 160, w: 120, h: 60 },
-  { id: 'o3', x: 180, y: 500, w: 120, h: 60 },
-  { id: 'o4', x: 980, y: 500, w: 120, h: 60 },
-  { id: 'o5', x: 560, y: 80, w: 160, h: 50 },
-  { id: 'o6', x: 560, y: 590, w: 160, h: 50 },
-  { id: 'o7', x: 460, y: 320, w: 80, h: 80 },
-  { id: 'o8', x: 740, y: 320, w: 80, h: 80 },
-];
+const OBSTACLES: Obstacle[] = generateObstacles();
 
 const players: Record<string, Player> = {};
 const bullets: Record<string, Bullet> = {};
+const pendingMoves: Record<string, { x: number; y: number }> = {};
 const lastShotAt: Record<string, number> = {};
+const lastMovementAt: Record<string, number> = {};
 let bulletSeq = 0;
 
 let pendingSpawnedBullets: Bullet[] = [];
@@ -218,7 +235,7 @@ io.on('connection', (socket: Socket) => {
       maxHp: MAX_HP,
       alive: true,
       kills: 0,
-      dirty: true,
+      damageMultiplier: 1,
     };
     players[socket.id] = player;
     socket.emit('joined', {
@@ -236,6 +253,9 @@ io.on('connection', (socket: Socket) => {
     const player = players[socket.id];
     if (!player || !player.alive) return;
     if (typeof data?.x !== 'number' || typeof data?.y !== 'number') return;
+    const now = Date.now();
+    if (now - (lastMovementAt[socket.id] ?? 0) < TICK_MS) return;
+    lastMovementAt[socket.id] = now;
     const clamped = clampToWorld(data.x, data.y);
     let nx = clamped.x;
     let ny = clamped.y;
@@ -251,7 +271,7 @@ io.on('connection', (socket: Socket) => {
     if (nx === player.x && ny === player.y) return;
     player.x = nx;
     player.y = ny;
-    player.dirty = true;
+    pendingMoves[socket.id] = { x: nx, y: ny };
   });
 
   socket.on('shoot', (data: unknown) => {
@@ -261,17 +281,18 @@ io.on('connection', (socket: Socket) => {
     if (typeof dx !== 'number' || typeof dy !== 'number') return;
     const sdx = Math.sign(Math.trunc(dx));
     const sdy = Math.sign(Math.trunc(dy));
-    if ((sdx === 0) === (sdy === 0)) return;
+    if (sdx === 0 && sdy === 0) return;
+    const len = Math.hypot(sdx, sdy);
     const now = Date.now();
     if (now - (lastShotAt[socket.id] ?? 0) < SHOOT_COOLDOWN_MS) return;
     lastShotAt[socket.id] = now;
     const bullet: Bullet = {
       id: `b${++bulletSeq}`,
       ownerId: socket.id,
-      x: player.x + sdx * (PLAYER_RADIUS + BULLET_RADIUS + 2),
-      y: player.y + sdy * (PLAYER_RADIUS + BULLET_RADIUS + 2),
-      vx: sdx * BULLET_SPEED,
-      vy: sdy * BULLET_SPEED,
+      x: player.x + (sdx / len) * (PLAYER_RADIUS + BULLET_RADIUS + 2),
+      y: player.y + (sdy / len) * (PLAYER_RADIUS + BULLET_RADIUS + 2),
+      vx: (sdx / len) * BULLET_SPEED,
+      vy: (sdy / len) * BULLET_SPEED,
       color: player.color,
       spawnedAt: now,
     };
@@ -288,17 +309,35 @@ io.on('connection', (socket: Socket) => {
     player.x = spawn.x;
     player.y = spawn.y;
     player.hp = MAX_HP;
+    player.maxHp = MAX_HP;
+    player.damageMultiplier = 1;
     player.alive = true;
     player.dirty = true;
     pendingRespawned.push(player);
     console.log(`Player respawned: ${player.name} (${socket.id})`);
   });
 
+  socket.on('upgrade', (data: unknown) => {
+    const player = players[socket.id];
+    if (!player || !player.alive) return;
+    const type = (data as { type?: string })?.type;
+    if (type === 'health') {
+      player.maxHp *= 1.25;
+      player.hp = player.maxHp;
+      io.emit('playerStatsUpdated', { playerId: player.id, hp: player.hp, maxHp: player.maxHp });
+    } else if (type === 'damage') {
+      player.damageMultiplier = player.damageMultiplier + 0.25;
+    }
+    // 'speed' is handled client-side only
+  });
+
   socket.on('leaveGame', () => {
     if (!players[socket.id]) return;
     delete players[socket.id];
     delete lastShotAt[socket.id];
-    pendingLeft.push(socket.id);
+    delete lastMovementAt[socket.id];
+    delete pendingMoves[socket.id];
+    io.emit('userDisconnected', socket.id);
     console.log(`Player left: ${socket.id}`);
   });
 
@@ -309,6 +348,8 @@ io.on('connection', (socket: Socket) => {
       pendingLeft.push(socket.id);
     }
     delete lastShotAt[socket.id];
+    delete lastMovementAt[socket.id];
+    delete pendingMoves[socket.id];
   });
 });
 
@@ -317,6 +358,16 @@ setInterval(() => {
   const now = Date.now();
   const dt = (now - lastTickAt) / 1000;
   lastTickAt = now;
+
+  const moved: { id: string; x: number; y: number }[] = [];
+  const removed: string[] = [];
+  const hits: { playerId: string; hp: number; attackerId: string; bulletId: string }[] = [];
+  const deaths: { playerId: string; killerId: string }[] = [];
+
+  for (const id in pendingMoves) {
+    moved.push({ id, x: pendingMoves[id].x, y: pendingMoves[id].y });
+    delete pendingMoves[id];
+  }
 
   for (const id in bullets) {
     const b = bullets[id];
@@ -328,20 +379,17 @@ setInterval(() => {
       b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H
     ) {
       delete bullets[id];
-      pendingRemovedBullets.push(id);
+      removed.push(id);
       continue;
     }
 
     let hitObstacle = false;
     for (const o of OBSTACLES) {
-      if (pointInRect(b.x, b.y, o)) {
-        hitObstacle = true;
-        break;
-      }
+      if (pointInRect(b.x, b.y, o)) { hitObstacle = true; break; }
     }
     if (hitObstacle) {
       delete bullets[id];
-      pendingRemovedBullets.push(id);
+      removed.push(id);
       continue;
     }
 
@@ -353,68 +401,26 @@ setInterval(() => {
       const dy = p.y - b.y;
       const r = PLAYER_RADIUS + BULLET_RADIUS;
       if (dx * dx + dy * dy <= r * r) {
-        p.hp = Math.max(0, p.hp - BULLET_DAMAGE);
-        p.dirty = true;
-        pendingHits.push({
-          playerId: p.id,
-          hp: p.hp,
-          attackerId: b.ownerId,
-          bulletId: b.id,
-        });
+        const owner = players[b.ownerId];
+        const dmg = Math.round(BULLET_DAMAGE * (owner?.damageMultiplier ?? 1));
+        p.hp = Math.max(0, p.hp - dmg);
+        hits.push({ playerId: p.id, hp: p.hp, attackerId: b.ownerId, bulletId: b.id });
         delete bullets[id];
-        pendingRemovedBullets.push(id);
+        removed.push(id);
         if (p.hp <= 0) {
           p.alive = false;
           const killer = players[b.ownerId];
           if (killer) killer.kills += 1;
-          pendingDeaths.push({ playerId: p.id, killerId: b.ownerId });
+          deaths.push({ playerId: p.id, killerId: b.ownerId });
         }
         break;
       }
     }
   }
 
-  const playerUpdates: PlayerPositionUpdate[] = [];
-  for (const id in players) {
-    const p = players[id];
-    if (!p.dirty) continue;
-    playerUpdates.push({ id: p.id, x: p.x, y: p.y, hp: p.hp });
-    p.dirty = false;
+  if (moved.length || removed.length || hits.length || deaths.length) {
+    io.emit('tick', { moved, removed, hits, deaths });
   }
-
-  if (
-    playerUpdates.length === 0 &&
-    pendingSpawnedBullets.length === 0 &&
-    pendingRemovedBullets.length === 0 &&
-    pendingHits.length === 0 &&
-    pendingDeaths.length === 0 &&
-    pendingJoined.length === 0 &&
-    pendingLeft.length === 0 &&
-    pendingRespawned.length === 0
-  ) {
-    return;
-  }
-
-  const update: StateUpdate = {
-    t: now,
-    players: playerUpdates,
-    spawnedBullets: pendingSpawnedBullets,
-    removedBullets: pendingRemovedBullets,
-    hits: pendingHits,
-    deaths: pendingDeaths,
-    joined: pendingJoined,
-    left: pendingLeft,
-    respawned: pendingRespawned,
-  };
-  io.emit('state', update);
-
-  pendingSpawnedBullets = [];
-  pendingRemovedBullets = [];
-  pendingHits = [];
-  pendingDeaths = [];
-  pendingJoined = [];
-  pendingLeft = [];
-  pendingRespawned = [];
 }, TICK_MS);
 
 app.get('/', (_req, res) => {

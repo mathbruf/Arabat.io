@@ -50,12 +50,10 @@ export class InputController {
     return { x, y };
   }
 
-  // Cardinal only; arbitrary precedence if multiple arrows are held.
   getShootDirection(): ShootDir | null {
-    if (this.arrows.up.isDown) return { x: 0, y: -1 };
-    if (this.arrows.down.isDown) return { x: 0, y: 1 };
-    if (this.arrows.left.isDown) return { x: -1, y: 0 };
-    if (this.arrows.right.isDown) return { x: 1, y: 0 };
-    return null;
+    const x = (this.arrows.right.isDown ? 1 : 0) - (this.arrows.left.isDown ? 1 : 0);
+    const y = (this.arrows.down.isDown ? 1 : 0) - (this.arrows.up.isDown ? 1 : 0);
+    if (x === 0 && y === 0) return null;
+    return { x: x as -1 | 0 | 1, y: y as -1 | 0 | 1 };
   }
 }

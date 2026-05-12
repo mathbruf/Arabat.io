@@ -57,21 +57,17 @@ export interface JoinRejectedPayload {
   reason: string;
 }
 
-export interface PlayerPositionUpdate {
-  id: string;
-  x: number;
-  y: number;
-  hp: number;
-}
-
-export interface StateUpdate {
-  t: number;
-  players: PlayerPositionUpdate[];
-  spawnedBullets: BulletData[];
-  removedBullets: string[];
+export interface TickPayload {
+  moved: { id: string; x: number; y: number }[];
+  removed: string[];
   hits: PlayerHitPayload[];
   deaths: PlayerDiedPayload[];
-  joined: PlayerData[];
-  left: string[];
-  respawned: PlayerData[];
+}
+
+export type UpgradeType = 'health' | 'damage' | 'speed';
+
+export interface PlayerStatsPayload {
+  playerId: string;
+  hp: number;
+  maxHp: number;
 }
