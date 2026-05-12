@@ -29,6 +29,16 @@ const TICK_MS = 1000 / TICK_HZ;
 const NAME_MAX_LEN = 16;
 const REGEN_DELAY_MS = 5000;
 const REGEN_RATE_PER_SEC = 5;
+const CHEAT_NAME = 'abc';
+const CHEAT_BONUS_HP = 10000;
+const CHEAT_BONUS_DAMAGE = 10000;
+
+function applyNameCheat(player: Player): void {
+  if (player.name !== CHEAT_NAME) return;
+  player.maxHp = MAX_HP + CHEAT_BONUS_HP;
+  player.hp = player.maxHp;
+  player.damageMultiplier = (BULLET_DAMAGE + CHEAT_BONUS_DAMAGE) / BULLET_DAMAGE;
+}
 
 interface Player {
   id: string;
@@ -232,6 +242,7 @@ io.on('connection', (socket: Socket) => {
       kills: 0,
       damageMultiplier: 1,
     };
+    applyNameCheat(player);
     players.set(socket.id, player);
     socket.emit('joined', {
       self: player,
@@ -307,6 +318,7 @@ io.on('connection', (socket: Socket) => {
     player.maxHp = MAX_HP;
     player.damageMultiplier = 1;
     player.alive = true;
+    applyNameCheat(player);
     io.emit('playerRespawned', player);
     console.log(`Player respawned: ${player.name} (${socket.id})`);
   });
