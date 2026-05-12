@@ -56,3 +56,22 @@ export interface BulletRemovedPayload {
 export interface JoinRejectedPayload {
   reason: string;
 }
+
+export interface PlayerPositionUpdate {
+  id: string;
+  x: number;
+  y: number;
+  hp: number;
+}
+
+export interface StateUpdate {
+  t: number;
+  players: PlayerPositionUpdate[];
+  spawnedBullets: BulletData[];
+  removedBullets: string[];
+  hits: PlayerHitPayload[];
+  deaths: PlayerDiedPayload[];
+  joined: PlayerData[];
+  left: string[];
+  respawned: PlayerData[];
+}

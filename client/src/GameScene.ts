@@ -7,6 +7,8 @@ import {
   PlayerData,
   PlayerDiedPayload,
   PlayerHitPayload,
+  PlayerPositionUpdate,
+  StateUpdate,
 } from './types';
 import { InputController } from './input/InputController';
 import { LocalPlayer, PLAYER_RADIUS } from './entities/LocalPlayer';
@@ -20,6 +22,13 @@ import { WORLD_WIDTH, WORLD_HEIGHT } from './constants';
 const POSITION_SEND_HZ = 20;
 const SEND_INTERVAL_MS = 1000 / POSITION_SEND_HZ;
 const SHOOT_COOLDOWN_MS = 500;
+
+function resolveServerUrl(): string {
+  const raw = (import.meta.env.VITE_SERVER_URL as string | undefined) ?? '';
+  if (raw) return /^https?:\/\//.test(raw) ? raw : `https://${raw}`;
+  if (import.meta.env.DEV) return 'http://localhost:3000';
+  return '';
+}
 
 export class GameScene extends Phaser.Scene {
   private inputCtl!: InputController;
@@ -59,11 +68,7 @@ export class GameScene extends Phaser.Scene {
 
     this.menu = new Menu((name) => this.handleMenuSubmit(name));
 
-    const serverUrl =
-      import.meta.env.VITE_SERVER_URL ??
-      (import.meta.env.DEV ? 'http://localhost:3000' : '');
-
-    this.network = new NetworkClient(serverUrl, {
+    this.network = new NetworkClient(resolveServerUrl(), {
       onConnect: () => this.menu.setConnected(true),
       onDisconnect: () => {
         this.menu.setConnected(false);
@@ -71,14 +76,7 @@ export class GameScene extends Phaser.Scene {
       },
       onJoined: (payload) => this.handleJoined(payload),
       onJoinRejected: (payload) => this.handleJoinRejected(payload),
-      onNewPlayer: (player) => this.handleNewPlayer(player),
-      onPlayerMoved: (player) => this.handlePlayerMoved(player),
-      onUserDisconnected: (id) => this.handleDisconnect(id),
-      onBulletSpawned: (bullet) => this.handleBulletSpawned(bullet),
-      onBulletRemoved: (payload) => this.handleBulletRemoved(payload),
-      onPlayerHit: (payload) => this.handlePlayerHit(payload),
-      onPlayerDied: (payload) => this.handlePlayerDied(payload),
-      onPlayerRespawned: (player) => this.handlePlayerRespawned(player),
+      onState: (update) => this.handleState(update),
     });
 
     this.input.keyboard!.on('keydown-ESC', () => {
@@ -166,10 +164,26 @@ export class GameScene extends Phaser.Scene {
     this.refreshLeaderboard();
   }
 
-  private handlePlayerMoved(player: PlayerData): void {
-    if (player.id === this.selfId) return;
-    const remote = this.remotePlayers.get(player.id);
-    if (remote) remote.setTarget(player.x, player.y);
+  private handleState(update: StateUpdate): void {
+    for (const player of update.joined) this.handleNewPlayer(player);
+    for (const player of update.respawned) this.handlePlayerRespawned(player);
+    for (const bullet of update.spawnedBullets) this.handleBulletSpawned(bullet);
+    for (const pos of update.players) this.applyPlayerPosition(pos);
+    for (const hit of update.hits) this.handlePlayerHit(hit);
+    for (const death of update.deaths) this.handlePlayerDied(death);
+    for (const id of update.removedBullets) this.handleBulletRemoved({ id });
+    for (const id of update.left) this.handleDisconnect(id);
+  }
+
+  private applyPlayerPosition(pos: PlayerPositionUpdate): void {
+    if (pos.id === this.selfId) {
+      // self position is client-authoritative; hp arrives via hits
+      return;
+    }
+    const remote = this.remotePlayers.get(pos.id);
+    if (!remote) return;
+    remote.setTarget(pos.x, pos.y);
+    remote.setHp(pos.hp);
   }
 
   private handleDisconnect(id: string): void {

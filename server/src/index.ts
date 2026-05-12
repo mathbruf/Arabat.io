@@ -2,8 +2,6 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import cors from 'cors';
-import path from 'path';
-import { existsSync } from 'fs';
 
 const app = express();
 app.use(cors());
@@ -40,6 +38,7 @@ interface Player {
   maxHp: number;
   alive: boolean;
   kills: number;
+  dirty: boolean;
 }
 
 interface Bullet {
@@ -61,6 +60,37 @@ interface Obstacle {
   h: number;
 }
 
+interface PlayerPositionUpdate {
+  id: string;
+  x: number;
+  y: number;
+  hp: number;
+}
+
+interface HitEvent {
+  playerId: string;
+  hp: number;
+  attackerId: string;
+  bulletId: string;
+}
+
+interface DeathEvent {
+  playerId: string;
+  killerId: string;
+}
+
+interface StateUpdate {
+  t: number;
+  players: PlayerPositionUpdate[];
+  spawnedBullets: Bullet[];
+  removedBullets: string[];
+  hits: HitEvent[];
+  deaths: DeathEvent[];
+  joined: Player[];
+  left: string[];
+  respawned: Player[];
+}
+
 const OBSTACLES: Obstacle[] = [
   { id: 'o1', x: 180, y: 160, w: 120, h: 60 },
   { id: 'o2', x: 980, y: 160, w: 120, h: 60 },
@@ -76,6 +106,14 @@ const players: Record<string, Player> = {};
 const bullets: Record<string, Bullet> = {};
 const lastShotAt: Record<string, number> = {};
 let bulletSeq = 0;
+
+let pendingSpawnedBullets: Bullet[] = [];
+let pendingRemovedBullets: string[] = [];
+let pendingHits: HitEvent[] = [];
+let pendingDeaths: DeathEvent[] = [];
+let pendingJoined: Player[] = [];
+let pendingLeft: string[] = [];
+let pendingRespawned: Player[] = [];
 
 function randomBetween(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -107,7 +145,6 @@ function randomSpawn(): { x: number; y: number } {
     const y = randomBetween(pad, WORLD_H - pad);
     if (positionFreeForPlayer(x, y)) return { x, y };
   }
-  // Fallback: world center (kept free by obstacle layout).
   return { x: WORLD_W / 2, y: WORLD_H / 2 };
 }
 
@@ -181,6 +218,7 @@ io.on('connection', (socket: Socket) => {
       maxHp: MAX_HP,
       alive: true,
       kills: 0,
+      dirty: true,
     };
     players[socket.id] = player;
     socket.emit('joined', {
@@ -190,7 +228,7 @@ io.on('connection', (socket: Socket) => {
       obstacles: OBSTACLES,
       world: { width: WORLD_W, height: WORLD_H },
     });
-    socket.broadcast.emit('newPlayer', player);
+    pendingJoined.push(player);
     console.log(`Player joined: ${name} (${socket.id})`);
   });
 
@@ -199,7 +237,6 @@ io.on('connection', (socket: Socket) => {
     if (!player || !player.alive) return;
     if (typeof data?.x !== 'number' || typeof data?.y !== 'number') return;
     const clamped = clampToWorld(data.x, data.y);
-    // Slide along obstacles: take whichever single axis is free.
     let nx = clamped.x;
     let ny = clamped.y;
     if (!positionFreeForPlayer(nx, ny)) {
@@ -208,12 +245,13 @@ io.on('connection', (socket: Socket) => {
       } else if (positionFreeForPlayer(player.x, ny)) {
         nx = player.x;
       } else {
-        return; // movement fully blocked; ignore
+        return;
       }
     }
+    if (nx === player.x && ny === player.y) return;
     player.x = nx;
     player.y = ny;
-    socket.broadcast.emit('playerMoved', player);
+    player.dirty = true;
   });
 
   socket.on('shoot', (data: unknown) => {
@@ -223,7 +261,6 @@ io.on('connection', (socket: Socket) => {
     if (typeof dx !== 'number' || typeof dy !== 'number') return;
     const sdx = Math.sign(Math.trunc(dx));
     const sdy = Math.sign(Math.trunc(dy));
-    // Require strictly one cardinal axis; reject diagonals and zeros.
     if ((sdx === 0) === (sdy === 0)) return;
     const now = Date.now();
     if (now - (lastShotAt[socket.id] ?? 0) < SHOOT_COOLDOWN_MS) return;
@@ -239,7 +276,7 @@ io.on('connection', (socket: Socket) => {
       spawnedAt: now,
     };
     bullets[bullet.id] = bullet;
-    io.emit('bulletSpawned', bullet);
+    pendingSpawnedBullets.push(bullet);
   });
 
   socket.on('respawn', (data: unknown) => {
@@ -252,7 +289,8 @@ io.on('connection', (socket: Socket) => {
     player.y = spawn.y;
     player.hp = MAX_HP;
     player.alive = true;
-    io.emit('playerRespawned', player);
+    player.dirty = true;
+    pendingRespawned.push(player);
     console.log(`Player respawned: ${player.name} (${socket.id})`);
   });
 
@@ -260,7 +298,7 @@ io.on('connection', (socket: Socket) => {
     if (!players[socket.id]) return;
     delete players[socket.id];
     delete lastShotAt[socket.id];
-    io.emit('userDisconnected', socket.id);
+    pendingLeft.push(socket.id);
     console.log(`Player left: ${socket.id}`);
   });
 
@@ -268,7 +306,7 @@ io.on('connection', (socket: Socket) => {
     console.log(`Socket disconnected: ${socket.id}`);
     if (players[socket.id]) {
       delete players[socket.id];
-      io.emit('userDisconnected', socket.id);
+      pendingLeft.push(socket.id);
     }
     delete lastShotAt[socket.id];
   });
@@ -290,7 +328,7 @@ setInterval(() => {
       b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H
     ) {
       delete bullets[id];
-      io.emit('bulletRemoved', { id });
+      pendingRemovedBullets.push(id);
       continue;
     }
 
@@ -303,7 +341,7 @@ setInterval(() => {
     }
     if (hitObstacle) {
       delete bullets[id];
-      io.emit('bulletRemoved', { id });
+      pendingRemovedBullets.push(id);
       continue;
     }
 
@@ -316,37 +354,72 @@ setInterval(() => {
       const r = PLAYER_RADIUS + BULLET_RADIUS;
       if (dx * dx + dy * dy <= r * r) {
         p.hp = Math.max(0, p.hp - BULLET_DAMAGE);
-        io.emit('playerHit', {
+        p.dirty = true;
+        pendingHits.push({
           playerId: p.id,
           hp: p.hp,
           attackerId: b.ownerId,
           bulletId: b.id,
         });
         delete bullets[id];
-        io.emit('bulletRemoved', { id });
+        pendingRemovedBullets.push(id);
         if (p.hp <= 0) {
           p.alive = false;
           const killer = players[b.ownerId];
           if (killer) killer.kills += 1;
-          io.emit('playerDied', { playerId: p.id, killerId: b.ownerId });
+          pendingDeaths.push({ playerId: p.id, killerId: b.ownerId });
         }
         break;
       }
     }
   }
+
+  const playerUpdates: PlayerPositionUpdate[] = [];
+  for (const id in players) {
+    const p = players[id];
+    if (!p.dirty) continue;
+    playerUpdates.push({ id: p.id, x: p.x, y: p.y, hp: p.hp });
+    p.dirty = false;
+  }
+
+  if (
+    playerUpdates.length === 0 &&
+    pendingSpawnedBullets.length === 0 &&
+    pendingRemovedBullets.length === 0 &&
+    pendingHits.length === 0 &&
+    pendingDeaths.length === 0 &&
+    pendingJoined.length === 0 &&
+    pendingLeft.length === 0 &&
+    pendingRespawned.length === 0
+  ) {
+    return;
+  }
+
+  const update: StateUpdate = {
+    t: now,
+    players: playerUpdates,
+    spawnedBullets: pendingSpawnedBullets,
+    removedBullets: pendingRemovedBullets,
+    hits: pendingHits,
+    deaths: pendingDeaths,
+    joined: pendingJoined,
+    left: pendingLeft,
+    respawned: pendingRespawned,
+  };
+  io.emit('state', update);
+
+  pendingSpawnedBullets = [];
+  pendingRemovedBullets = [];
+  pendingHits = [];
+  pendingDeaths = [];
+  pendingJoined = [];
+  pendingLeft = [];
+  pendingRespawned = [];
 }, TICK_MS);
 
-const clientDist = path.resolve(__dirname, '../../client/dist');
-if (existsSync(clientDist)) {
-  app.use(express.static(clientDist));
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(clientDist, 'index.html'));
-  });
-} else {
-  app.get('/', (_req, res) => {
-    res.send('arabat-io server is running (no client build present)');
-  });
-}
+app.get('/', (_req, res) => {
+  res.json({ ok: true, service: 'arabat-server' });
+});
 
 const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {
